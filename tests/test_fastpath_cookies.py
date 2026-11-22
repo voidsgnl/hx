@@ -59,6 +59,7 @@ def test_cookie_path_secure_and_expiry_are_respected():
         cookie("admin", "yes", "app.example.test", path="/admin"),
         cookie("secure", "yes", "app.example.test", secure=True),
         cookie("expired", "yes", "app.example.test", expires=expired),
+        cookie("zero_expiry", "yes", "app.example.test", expires=0),
     ]
 
     assert fast._cookies(cookies, "http://app.example.test/admin/page") == {
