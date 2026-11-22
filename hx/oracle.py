@@ -1,14 +1,14 @@
-"""Execution oracle: prove XSS by observing execution, not by matching text.
+"""Execution oracle: prove XSS by matching execution to a unique payload marker.
 
-Every injected payload carries a unique payload_id. The init script records
-hits tagged with whatever payload_id is active. probe() sets the id, navigates,
-waits for async execution, then reads hits back. A hit whose detail contains
-the id = proven execution of THAT payload.
+A probe ID is embedded in the payload itself. Browser events are attributed to
+that probe only when the event carries the same ID in its execution details;
+the session ID alone is never sufficient evidence.
 """
 import asyncio
 import uuid
 from dataclasses import dataclass
 from urllib.parse import urlparse
+
 
 ORACLE_INIT_JS = """
 window.__hx_active_id = null;
@@ -24,33 +24,32 @@ window.__hx_record = function(kind, detail) {
     ts: Date.now(),
   });
 };
-const _alert = window.alert;
-window.alert = function(m){ window.__hx_record('alert', m); };
-const _confirm = window.confirm;
-window.confirm = function(m){ window.__hx_record('confirm', m); return true; };
-const _prompt = window.prompt;
-window.prompt = function(m){ window.__hx_record('prompt', m); return ''; };
+window.alert = function(m) { window.__hx_record("alert", m); };
+window.confirm = function(m) {
+  window.__hx_record("confirm", m);
+  return true;
+};
+window.prompt = function(m) {
+  window.__hx_record("prompt", m);
+  return "";
+};
 const _eval = window.eval;
-window.eval = function(c){
+window.eval = function(c) {
   const source = String(c);
-  if (
-    !window.__hx_internal
-    && source !== "window.__hx_hits"
-    && source !== "() => window.__hx_hits"
-    && source !== "() => { window.__hx_internal = true; return window.__hx_hits; }"
-    && source !== "() => { window.__hx_internal = false; }"
-  ) {
-    window.__hx_record('eval', source);
+  if (!window.__hx_internal) {
+    window.__hx_record("eval", source);
   }
   return _eval(c);
 };
 """
+
 
 @dataclass
 class Hit:
     kind: str
     detail: str
     payload_id: str | None
+
 
 @dataclass
 class ProbeResult:
@@ -60,72 +59,84 @@ class ProbeResult:
 
 
 def make_payload_id() -> str:
-    return "hx" + uuid.uuid4().hex[:12]
+    """Return a fresh, unpredictable marker to embed in one probe payload."""
+    return "hx" + uuid.uuid4().hex
+
+
+async def _prepare_probe(page, payload_id: str) -> None:
+    await page.evaluate(
+        """({id}) => {
+          sessionStorage.setItem("__hx_active_payload_id", id);
+          window.__hx_active_id = id;
+          window.__hx_hits = [];
+        }""",
+        {"id": payload_id},
+    )
 
 
 async def _read_hits(page) -> list:
     raw = await page.evaluate(
-        "() => { window.__hx_internal = true; return window.__hx_hits; }"
+        "() => { window.__hx_internal = true; return window.__hx_hits || []; }"
     )
     await page.evaluate("() => { window.__hx_internal = false; }")
     return raw or []
 
 
-async def probe(page, url: str, payload: str, settle: float = 1.2) -> ProbeResult:
-    """Navigate to url (already containing payload), collect execution hits."""
-    pid = make_payload_id()
-    # sessionStorage survives navigation, unlike window state recreated by init scripts.
-    await page.evaluate(
-        "({id}) => { "
-        "  sessionStorage.setItem('__hx_active_payload_id', id); "
-        "  window.__hx_active_id = id; "
-        "  window.__hx_hits = []; "
-        "}",
-        {"id": pid},
+async def _collect_result(page, payload_id: str) -> ProbeResult:
+    raw = await _read_hits(page)
+    hits = [
+        Hit(kind=h["kind"], detail=h["detail"], payload_id=h.get("id"))
+        for h in raw
+    ]
+    # The active session ID labels the browsing attempt, not the cause of an
+    # event. Require the unpredictable marker to appear in the event details.
+    proven = any(
+        hit.payload_id == payload_id
+        and payload_id in hit.detail
+        and hit.kind in ("alert", "confirm", "prompt", "eval")
+        for hit in hits
     )
+    return ProbeResult(proven=proven, payload_id=payload_id, hits=hits)
+
+
+async def probe(
+    page, url: str, payload: str, *, payload_id: str, settle: float = 1.2
+) -> ProbeResult:
+    """Navigate to a payload URL and prove only execution carrying payload_id."""
+    await _prepare_probe(page, payload_id)
     try:
         await page.goto(url, wait_until="domcontentloaded", timeout=15000)
     except Exception:
-        # navigation may fail mid-redirect; hits collected so far still valid
+        # A redirect or navigation failure may occur after script execution.
         pass
     await asyncio.sleep(settle)
-    raw = await _read_hits(page)
-    hits = [Hit(kind=h["kind"], detail=h["detail"], payload_id=h.get("id"))
-            for h in (raw or [])]
-    proven = any(
-        h.payload_id == pid and h.kind in ("alert", "confirm", "prompt", "eval")
-        for h in hits
-    )
-    return ProbeResult(proven=proven, payload_id=pid, hits=hits)
+    return await _collect_result(page, payload_id)
 
-from hx.submit import form_submit_page, json_fetch_page
 
-async def probe_post_form(page, action: str, fields: dict[str, str],
-                          settle: float = 1.5) -> ProbeResult:
-    pid = make_payload_id()
+async def probe_post_form(
+    page,
+    action: str,
+    fields: dict[str, str],
+    *,
+    payload_id: str,
+    settle: float = 1.5,
+) -> ProbeResult:
     parsed = urlparse(action)
     origin = f"{parsed.scheme}://{parsed.netloc}/"
     try:
         await page.goto(origin, wait_until="domcontentloaded", timeout=15000)
     except Exception:
         pass
-    await page.evaluate(
-        "({id}) => { "
-        "  sessionStorage.setItem('__hx_active_payload_id', id); "
-        "  window.__hx_active_id = id; "
-        "  window.__hx_hits = []; "
-        "}",
-        {"id": pid},
-    )
+    await _prepare_probe(page, payload_id)
     try:
         await page.evaluate(
-            """async ({action, fields}) => {
-              const form = document.createElement('form');
-              form.method = 'POST';
+            """({action, fields}) => {
+              const form = document.createElement("form");
+              form.method = "POST";
               form.action = action;
               for (const [name, value] of Object.entries(fields)) {
-                const input = document.createElement('input');
-                input.type = 'hidden';
+                const input = document.createElement("input");
+                input.type = "hidden";
                 input.name = name;
                 input.value = value;
                 form.appendChild(input);
@@ -138,44 +149,39 @@ async def probe_post_form(page, action: str, fields: dict[str, str],
     except Exception:
         pass
     await asyncio.sleep(settle)
-    raw = await _read_hits(page)
-    hits = [Hit(kind=h["kind"], detail=h["detail"], payload_id=h.get("id"))
-            for h in (raw or [])]
-    proven = any(
-        h.payload_id == pid and h.kind in ("alert", "confirm", "prompt", "eval")
-        for h in hits
-    )
-    return ProbeResult(proven=proven, payload_id=pid, hits=hits)
+    return await _collect_result(page, payload_id)
 
 
-async def probe_post_json(page, action: str, body: dict,
-                          settle: float = 1.8) -> ProbeResult:
-    pid = make_payload_id()
+async def probe_post_json(
+    page,
+    action: str,
+    body: dict,
+    *,
+    payload_id: str,
+    settle: float = 1.8,
+) -> ProbeResult:
     parsed = urlparse(action)
     origin = f"{parsed.scheme}://{parsed.netloc}/"
     try:
         await page.goto(origin, wait_until="domcontentloaded", timeout=15000)
     except Exception:
         pass
-    await page.evaluate(
-        "({id}) => { "
-        "  sessionStorage.setItem('__hx_active_payload_id', id); "
-        "  window.__hx_active_id = id; "
-        "  window.__hx_hits = []; "
-        "}",
-        {"id": pid},
-    )
+    await _prepare_probe(page, payload_id)
     try:
         await page.evaluate(
             """async ({action, body}) => {
+              let text;
               window.__hx_internal = true;
-              const response = await fetch(action, {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify(body)
-              });
-              const text = await response.text();
-              window.__hx_internal = false;
+              try {
+                const response = await fetch(action, {
+                  method: "POST",
+                  headers: {"Content-Type": "application/json"},
+                  body: JSON.stringify(body)
+                });
+                text = await response.text();
+              } finally {
+                window.__hx_internal = false;
+              }
               document.open();
               document.write(text);
               document.close();
@@ -184,12 +190,5 @@ async def probe_post_json(page, action: str, body: dict,
         )
     except Exception:
         pass
-    await asyncio.sleep(settle)   # fetch + document.write needs a beat longer
-    raw = await _read_hits(page)
-    hits = [Hit(kind=h["kind"], detail=h["detail"], payload_id=h.get("id"))
-            for h in (raw or [])]
-    proven = any(
-        h.payload_id == pid and h.kind in ("alert", "confirm", "prompt", "eval")
-        for h in hits
-    )
-    return ProbeResult(proven=proven, payload_id=pid, hits=hits)
+    await asyncio.sleep(settle)
+    return await _collect_result(page, payload_id)
