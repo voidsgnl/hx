@@ -33,13 +33,23 @@ window.prompt = function(m) {
   window.__hx_record("prompt", m);
   return "";
 };
+Object.defineProperty(window, "__hx_proof", {
+  configurable: false,
+  writable: false,
+  value: function(id) {
+    if (typeof id === "string" && id === window.__hx_active_id) {
+      window.__hx_record("proof", id);
+    }
+  },
+});
 const _eval = window.eval;
 window.eval = function(c) {
   const source = String(c);
+  const result = _eval(c);
   if (!window.__hx_internal) {
     window.__hx_record("eval", source);
   }
-  return _eval(c);
+  return result;
 };
 """
 
@@ -88,12 +98,12 @@ async def _collect_result(page, payload_id: str) -> ProbeResult:
         Hit(kind=h["kind"], detail=h["detail"], payload_id=h.get("id"))
         for h in raw
     ]
-    # The active session ID labels the browsing attempt, not the cause of an
-    # event. Require the unpredictable marker to appear in the event details.
+    # Only the protected callback embedded in our payload can prove execution.
+    # Generic alerts/evals are telemetry, never proof by themselves.
     proven = any(
-        hit.payload_id == payload_id
-        and payload_id in hit.detail
-        and hit.kind in ("alert", "confirm", "prompt", "eval")
+        hit.kind == "proof"
+        and hit.payload_id == payload_id
+        and hit.detail == payload_id
         for hit in hits
     )
     return ProbeResult(proven=proven, payload_id=payload_id, hits=hits)
