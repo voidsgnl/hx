@@ -9,6 +9,7 @@ The impersonation profile MUST match the Playwright Chromium version, or the
 cookie is invalidated -> 403. Pin both to the same chrome version string.
 """
 from dataclasses import dataclass
+from urllib.parse import urljoin, urlparse
 from curl_cffi import requests as cffi
 from hx.versions import CURL_CFFI_IMPERSONATE
 
@@ -33,6 +34,33 @@ class FastPath:
         if self.request_guard:
             self.request_guard()
 
+    def _request(self, method: str, url: str, **kwargs):
+        """Send requests one hop at a time so redirects consume budget too."""
+        original_host = urlparse(url).hostname
+        request_kwargs = dict(kwargs)
+        for redirect_count in range(11):
+            self._reserve_request()
+            response = cffi.request(
+                method, url, allow_redirects=False, **request_kwargs
+            )
+            location = response.headers.get("Location")
+            if response.status_code not in (301, 302, 303, 307, 308) or not location:
+                return response
+            if redirect_count == 10:
+                return response
+
+            next_url = urljoin(url, location)
+            if urlparse(next_url).hostname != original_host:
+                request_kwargs["cookies"] = None
+            if response.status_code == 303 or (
+                response.status_code in (301, 302) and method.upper() == "POST"
+            ):
+                method = "GET"
+                request_kwargs.pop("data", None)
+                request_kwargs.pop("json", None)
+            url = next_url
+        return response
+
     def _cookies(self, browser_cookies: list[dict]) -> dict:
         return {c["name"]: c["value"] for c in browser_cookies
                 if c.get("domain", "").lstrip(".") in self._allowed_domains}
@@ -43,23 +71,20 @@ class FastPath:
 
     def fetch_body(self, url: str, browser_cookies: list[dict]) -> str:
         """Fetch a response body for context detection; never prove execution."""
-        self._reserve_request()
-        r = cffi.get(
+        r = self._request("GET",
             url,
             impersonate=self.impersonate,
             cookies=self._cookies(browser_cookies) if browser_cookies else None,
             proxies=self.proxies,
             http_version="v1",
             timeout=15,
-            allow_redirects=False,
         )
         return r.text or ""
 
     def find_reflection_post_form(self, url: str, fields: dict[str, str],
                                   marker: str,
                                   browser_cookies: list[dict]) -> Candidate | None:
-        self._reserve_request()
-        r = cffi.post(
+        r = self._request("POST",
             url,
             data=fields,
             impersonate=self.impersonate,
@@ -67,7 +92,6 @@ class FastPath:
             proxies=self.proxies,
             http_version="v1",
             timeout=15,
-            allow_redirects=False,
         )
         idx = (r.text or "").find(marker)
         if idx == -1:
@@ -77,8 +101,7 @@ class FastPath:
     def find_reflection_post_json(self, url: str, body: dict,
                                   marker: str,
                                   browser_cookies: list[dict]) -> Candidate | None:
-        self._reserve_request()
-        r = cffi.post(
+        r = self._request("POST",
             url,
             json=body,
             impersonate=self.impersonate,
@@ -86,7 +109,6 @@ class FastPath:
             proxies=self.proxies,
             http_version="v1",
             timeout=15,
-            allow_redirects=False,
         )
         idx = (r.text or "").find(marker)
         if idx == -1:
@@ -95,8 +117,7 @@ class FastPath:
 
     def fetch_body_post_form(self, url: str, fields: dict[str, str],
                              browser_cookies: list[dict]) -> str:
-        self._reserve_request()
-        r = cffi.post(
+        r = self._request("POST",
             url,
             data=fields,
             impersonate=self.impersonate,
@@ -104,14 +125,12 @@ class FastPath:
             proxies=self.proxies,
             http_version="v1",
             timeout=15,
-            allow_redirects=False,
         )
         return r.text or ""
 
     def fetch_body_post_json(self, url: str, body: dict,
                              browser_cookies: list[dict]) -> str:
-        self._reserve_request()
-        r = cffi.post(
+        r = self._request("POST",
             url,
             json=body,
             impersonate=self.impersonate,
@@ -119,22 +138,19 @@ class FastPath:
             proxies=self.proxies,
             http_version="v1",
             timeout=15,
-            allow_redirects=False,
         )
         return r.text or ""
 
     def find_reflection(self, url: str, marker: str,
                         browser_cookies: list[dict]) -> Candidate | None:
         """Return a Candidate if `marker` appears verbatim in the body, else None."""
-        self._reserve_request()
-        r = cffi.get(
+        r = self._request("GET",
             url,
             impersonate=self.impersonate,
             cookies=self._cookies(browser_cookies) if browser_cookies else None,
             proxies=self.proxies,
             http_version="v1",
             timeout=15,
-            allow_redirects=False,
         )
         body = r.text or ""
         idx = body.find(marker)
