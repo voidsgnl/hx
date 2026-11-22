@@ -104,6 +104,7 @@ async def scan(target: str | RequestSpec, *, proxy: str | None = None,
         request_guard=pacer.reserve,
     )
     try:
+        await pacer.pause()
         reached = await client.warm()
         result.reached_app = reached
         if not reached:
@@ -218,5 +219,9 @@ async def scan(target: str | RequestSpec, *, proxy: str | None = None,
         return result
     finally:
         result.requests_used = pacer.used
-        result.budget_exhausted = result.budget_exhausted or pacer.exhausted or client.budget_exhausted
+        result.budget_exhausted = (
+            result.budget_exhausted
+            or pacer.exhausted
+            or client.budget_exhausted
+        )
         await client.close()
