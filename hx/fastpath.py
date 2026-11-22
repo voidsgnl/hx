@@ -67,7 +67,7 @@ class FastPath:
             proxies=self.proxies,
             http_version="v1",
             timeout=15,
-            allow_redirects=True,
+            allow_redirects=False,
         )
         idx = (r.text or "").find(marker)
         if idx == -1:
@@ -77,6 +77,7 @@ class FastPath:
     def find_reflection_post_json(self, url: str, body: dict,
                                   marker: str,
                                   browser_cookies: list[dict]) -> Candidate | None:
+        self._reserve_request()
         r = cffi.post(
             url,
             json=body,
@@ -85,7 +86,7 @@ class FastPath:
             proxies=self.proxies,
             http_version="v1",
             timeout=15,
-            allow_redirects=True,
+            allow_redirects=False,
         )
         idx = (r.text or "").find(marker)
         if idx == -1:
@@ -94,6 +95,7 @@ class FastPath:
 
     def fetch_body_post_form(self, url: str, fields: dict[str, str],
                              browser_cookies: list[dict]) -> str:
+        self._reserve_request()
         r = cffi.post(
             url,
             data=fields,
@@ -102,12 +104,13 @@ class FastPath:
             proxies=self.proxies,
             http_version="v1",
             timeout=15,
-            allow_redirects=True,
+            allow_redirects=False,
         )
         return r.text or ""
 
     def fetch_body_post_json(self, url: str, body: dict,
                              browser_cookies: list[dict]) -> str:
+        self._reserve_request()
         r = cffi.post(
             url,
             json=body,
@@ -116,13 +119,14 @@ class FastPath:
             proxies=self.proxies,
             http_version="v1",
             timeout=15,
-            allow_redirects=True,
+            allow_redirects=False,
         )
         return r.text or ""
 
     def find_reflection(self, url: str, marker: str,
                         browser_cookies: list[dict]) -> Candidate | None:
         """Return a Candidate if `marker` appears verbatim in the body, else None."""
+        self._reserve_request()
         r = cffi.get(
             url,
             impersonate=self.impersonate,
@@ -130,7 +134,7 @@ class FastPath:
             proxies=self.proxies,
             http_version="v1",
             timeout=15,
-            allow_redirects=True,
+            allow_redirects=False,
         )
         body = r.text or ""
         idx = body.find(marker)
