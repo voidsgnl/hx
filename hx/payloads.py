@@ -106,8 +106,7 @@ def detect_context(body: str, marker_offset: int) -> Detected:
 
 def payloads_for(ctx: Context, pid_marker: str = "hxprobe") -> list[str]:
     """Ordered payloads for a context. {M} is replaced by the probe marker."""
-    a = f"alert('{pid_marker}')"
-    m = pid_marker
+    a = f"window.__hx_proof('{pid_marker}')"
 
     table: dict[Context, list[str]] = {
         Context.HTML_BODY: [
