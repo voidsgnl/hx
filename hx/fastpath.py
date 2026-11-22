@@ -22,10 +22,16 @@ class Candidate:
 
 
 class FastPath:
-    def __init__(self, impersonate: str = CURL_CFFI_IMPERSONATE, proxy: str | None = None):
+    def __init__(self, impersonate: str = CURL_CFFI_IMPERSONATE, proxy: str | None = None,
+                 request_guard=None):
         self.impersonate = impersonate
+        self.request_guard = request_guard
         self.proxies = {"https": proxy, "http": proxy} if proxy else None
         self._allowed_domains: set[str] = set()
+
+    def _reserve_request(self) -> None:
+        if self.request_guard:
+            self.request_guard()
 
     def _cookies(self, browser_cookies: list[dict]) -> dict:
         return {c["name"]: c["value"] for c in browser_cookies
@@ -37,6 +43,7 @@ class FastPath:
 
     def fetch_body(self, url: str, browser_cookies: list[dict]) -> str:
         """Fetch a response body for context detection; never prove execution."""
+        self._reserve_request()
         r = cffi.get(
             url,
             impersonate=self.impersonate,
@@ -44,13 +51,14 @@ class FastPath:
             proxies=self.proxies,
             http_version="v1",
             timeout=15,
-            allow_redirects=True,
+            allow_redirects=False,
         )
         return r.text or ""
 
     def find_reflection_post_form(self, url: str, fields: dict[str, str],
                                   marker: str,
                                   browser_cookies: list[dict]) -> Candidate | None:
+        self._reserve_request()
         r = cffi.post(
             url,
             data=fields,
