@@ -6,6 +6,7 @@ navigation, redirects, and subresources are counted individually.
 import asyncio
 from pathlib import Path
 from playwright.async_api import async_playwright, BrowserContext, Page
+from hx.pacer import BudgetExhausted
 
 
 STEALTH_JS = """
@@ -62,7 +63,7 @@ class TargetClient:
                 if request_url.startswith(("http://", "https://")):
                     try:
                         self.request_guard()
-                    except Exception:
+                    except BudgetExhausted:
                         self.budget_exhausted = True
                         await route.abort(error_code="blockedbyclient")
                         return
