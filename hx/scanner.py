@@ -16,6 +16,7 @@ from hx.oracle import (
     probe_post_json,
     ORACLE_INIT_JS,
     ProbeResult,
+    make_payload_id,
 )
 from hx.fastpath import FastPath, Candidate
 from hx.pacer import Pacer, BudgetExhausted
@@ -150,15 +151,24 @@ async def scan(target: str | RequestSpec, *, proxy: str | None = None,
         for param, cand, body in candidates:
             det = detect_context(body, cand.offset)
 
-            for payload in payloads_for(det.context):
+            payload_templates = payloads_for(det.context)
+            for payload_index in range(len(payload_templates)):
+                payload_id = make_payload_id()
+                payload = payloads_for(
+                    det.context, pid_marker=payload_id
+                )[payload_index]
                 payload_spec = _apply_marker(spec, param, payload)
                 await pacer.wait()
                 if payload_spec.method == "GET":
-                    pr = await probe(client.page, payload_spec.url, payload)
+                    pr = await probe(
+                        client.page, payload_spec.url, payload,
+                        payload_id=payload_id,
+                    )
                     finding_url = payload_spec.url
                 elif payload_spec.method == "POST":
                     pr = await probe_post_form(
-                        client.page, payload_spec.url, payload_spec.form or {}
+                        client.page, payload_spec.url, payload_spec.form or {},
+                        payload_id=payload_id,
                     )
                     finding_url = payload_spec.url
                 else:
@@ -166,6 +176,7 @@ async def scan(target: str | RequestSpec, *, proxy: str | None = None,
                         client.page,
                         payload_spec.url,
                         payload_spec.json_body or {},
+                        payload_id=payload_id,
                     )
                     finding_url = payload_spec.url
                 if pr.proven:
