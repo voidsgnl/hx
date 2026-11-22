@@ -42,6 +42,7 @@ class FastPath:
             impersonate=self.impersonate,
             cookies=self._cookies(browser_cookies) if browser_cookies else None,
             proxies=self.proxies,
+            http_version="v1",
             timeout=15,
             allow_redirects=True,
         )
@@ -56,6 +57,7 @@ class FastPath:
             impersonate=self.impersonate,
             cookies=self._cookies(browser_cookies) if browser_cookies else None,
             proxies=self.proxies,
+            http_version="v1",
             timeout=15,
             allow_redirects=True,
         )
@@ -73,6 +75,7 @@ class FastPath:
             impersonate=self.impersonate,
             cookies=self._cookies(browser_cookies) if browser_cookies else None,
             proxies=self.proxies,
+            http_version="v1",
             timeout=15,
             allow_redirects=True,
         )
@@ -89,6 +92,7 @@ class FastPath:
             impersonate=self.impersonate,
             cookies=self._cookies(browser_cookies) if browser_cookies else None,
             proxies=self.proxies,
+            http_version="v1",
             timeout=15,
             allow_redirects=True,
         )
@@ -102,6 +106,7 @@ class FastPath:
             impersonate=self.impersonate,
             cookies=self._cookies(browser_cookies) if browser_cookies else None,
             proxies=self.proxies,
+            http_version="v1",
             timeout=15,
             allow_redirects=True,
         )
@@ -115,6 +120,7 @@ class FastPath:
             impersonate=self.impersonate,
             cookies=self._cookies(browser_cookies) if browser_cookies else None,
             proxies=self.proxies,
+            http_version="v1",
             timeout=15,
             allow_redirects=True,
         )
