@@ -102,6 +102,7 @@ async def scan(target: str | RequestSpec, *, proxy: str | None = None,
     await client.start(
         oracle_init_script=ORACLE_INIT_JS,
         request_guard=pacer.reserve,
+        headless=headless,
     )
     try:
         await pacer.pause()
