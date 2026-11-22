@@ -119,5 +119,31 @@ def eval_sink():
     q = request.args.get("q", "")
     return f"<html><body><script>eval('{q}')</script></body></html>"
 
+@app.route("/discovery")
+def discovery_page():
+    return """
+<html><body>
+<form action="/reflect" method="GET">
+  <input type="text" name="q" value="hello">
+  <input type="text" name="note" value="x">
+  <input type="submit" value="go">
+</form>
+<form action="/post-csrf-check" method="POST">
+  <input type="hidden" name="csrf_token" value="abc123">
+  <input type="text" name="q" value="hello">
+  <input type="submit" value="go">
+</form>
+<form action="/safe" method="GET">
+  <input type="submit" value="no fields to inspect">
+</form>
+</body></html>
+"""
+
+@app.route("/post-csrf-check", methods=["POST"])
+def post_csrf_check():
+    if request.form.get("csrf_token") != "abc123":
+        return "csrf failed", 403
+    return "<html><body>ok</body></html>"
+
 if __name__ == "__main__":
     app.run(port=5000, debug=False)

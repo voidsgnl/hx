@@ -1,6 +1,6 @@
 typer>=0.12
 rich>=13.7
-playwright==1.49.1
+playwright==1.62.0
 curl_cffi==0.17.0
 
 [dev]

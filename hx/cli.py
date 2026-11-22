@@ -9,7 +9,11 @@ from rich.console import Console
 from rich.table import Table
 
 from hx import __version__
+from hx.client import TargetClient
+from hx.discover import FieldRole, discover_forms
+from hx.oracle import ORACLE_INIT_JS
 from hx.scanner import RequestSpec, scan
+from urllib.parse import urlparse
 
 app = typer.Typer(add_completion=False, help="Execution-oracle XSS scanner.")
 console = Console()
@@ -94,6 +98,75 @@ def scan_cmd(
 
 
 app.command(name="scan")(scan_cmd)
+
+
+@app.command(name="discover")
+def discover_cmd(
+    url: str = typer.Argument(..., help="Page URL whose forms should be listed"),
+    proxy: Optional[str] = typer.Option(None, help="Proxy URL"),
+    json_out: bool = typer.Option(False, "--json", help="Emit JSON instead of a table"),
+):
+    """List forms and field metadata without submitting them."""
+
+    async def discover():
+        parsed = urlparse(url)
+        origin = f"{parsed.scheme}://{parsed.netloc}"
+        client = TargetClient(origin, proxy=proxy)
+        await client.start(oracle_init_script=ORACLE_INIT_JS)
+        try:
+            if not await client.warm():
+                return None
+            await client.page.goto(
+                url, wait_until="domcontentloaded", timeout=20000
+            )
+            return await discover_forms(client.page)
+        finally:
+            await client.close()
+
+    forms = asyncio.run(discover())
+    if forms is None:
+        console.print("[red]✗ could not reach application[/red]")
+        raise typer.Exit(1)
+
+    if json_out:
+        typer.echo(json.dumps([
+            {
+                "action": form.action,
+                "method": form.method,
+                "enctype": form.enctype,
+                "fields": [
+                    {
+                        "name": item.name,
+                        "type": item.type,
+                        "role": item.role.value,
+                    }
+                    for item in form.fields
+                ],
+            }
+            for form in forms
+        ], indent=2))
+        return
+
+    if not forms:
+        console.print("[yellow]no forms with eligible fields found[/yellow]")
+        return
+
+    for index, form in enumerate(forms, start=1):
+        console.print(
+            f"[bold]{index}. {form.method} {form.action}[/bold] "
+            f"({form.enctype})"
+        )
+        for item in form.fields:
+            color = {
+                FieldRole.INJECTABLE: "green",
+                FieldRole.STATIC: "yellow",
+                FieldRole.SKIP: "dim",
+            }[item.role]
+            console.print(
+                f"    [{color}]{item.role.value:10}[/{color}] "
+                f"{item.name} ({item.type})"
+            )
+
 
 if __name__ == "__main__":
     app()

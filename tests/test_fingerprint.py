@@ -1,4 +1,5 @@
 import pytest
+from curl_cffi import requests as cffi
 
 from hx.client import TargetClient
 from hx.fingerprint import check_fingerprint_match
@@ -26,6 +27,12 @@ async def test_fingerprint_matches(client):
     )
     assert result.impersonate_version == CHROMIUM_MAJOR
     assert result.matches is True
+    response = cffi.get(
+        f"{BASE}/reflect?q=fingerprint",
+        impersonate=CURL_CFFI_IMPERSONATE,
+        timeout=5,
+    )
+    assert response.status_code == 200
 
 
 async def test_fingerprint_mismatch_warns(client):
@@ -33,6 +40,20 @@ async def test_fingerprint_mismatch_warns(client):
     assert result.matches is False
     assert result.warning is not None
     assert "FINGERPRINT MISMATCH" in result.warning
+
+
+async def test_chrome152_profile_is_detected_as_drift(client):
+    result = await check_fingerprint_match(client.page, "chrome152")
+    assert result.browser_version == CHROMIUM_MAJOR
+    assert result.impersonate_version == "152"
+    assert result.matches is False
+    assert "FINGERPRINT MISMATCH" in (result.warning or "")
+    response = cffi.get(
+        f"{BASE}/reflect?q=fingerprint",
+        impersonate="chrome152",
+        timeout=5,
+    )
+    assert response.status_code == 200
 
 
 async def test_fingerprint_bad_impersonate_string(client):
