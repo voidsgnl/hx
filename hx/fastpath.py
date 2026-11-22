@@ -111,7 +111,7 @@ class FastPath:
                     and path[len(cookie_path)] != "/"):
                 continue
             expires = cookie.get("expires", -1)
-            if expires not in (None, -1, 0) and expires <= now:
+            if expires not in (None, -1) and expires <= now:
                 continue
             selected[cookie["name"]] = cookie["value"]
         return selected
