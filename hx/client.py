@@ -1,12 +1,12 @@
 """TargetClient: one persistent Chromium context per target.
 
-Does double duty:
-  - WAF pass: real browser fingerprint, solves JS challenges, earns cf_clearance
-  - XSS oracle: same context executes payloads and reports hits
+The context routes every network request through a shared budget guard so
+navigation, redirects, and subresources are counted individually.
 """
 import asyncio
 from pathlib import Path
 from playwright.async_api import async_playwright, BrowserContext, Page
+
 
 STEALTH_JS = """
 Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
@@ -33,8 +33,11 @@ class TargetClient:
         self._pw = None
         self._context: BrowserContext | None = None
         self.page: Page | None = None
+        self.request_guard = None
+        self.budget_exhausted = False
 
-    async def start(self, oracle_init_script: str):
+    async def start(self, oracle_init_script: str, request_guard=None):
+        self.request_guard = request_guard
         Path(self.profile_dir).mkdir(parents=True, exist_ok=True)
         self._pw = await async_playwright().start()
         launch_kwargs = dict(
@@ -52,7 +55,22 @@ class TargetClient:
         self._context = await self._pw.chromium.launch_persistent_context(
             user_data_dir=self.profile_dir, **launch_kwargs
         )
-        # install stealth + oracle BEFORE any navigation
+
+        if self.request_guard:
+            async def guard_route(route):
+                request_url = route.request.url
+                if request_url.startswith(("http://", "https://")):
+                    try:
+                        self.request_guard()
+                    except Exception:
+                        self.budget_exhausted = True
+                        await route.abort(error_code="blockedbyclient")
+                        return
+                await route.continue_()
+
+            await self._context.route("**/*", guard_route)
+
+        # Install stealth + oracle BEFORE any navigation.
         await self._context.add_init_script(STEALTH_JS)
         await self._context.add_init_script(oracle_init_script)
         self.page = await self._context.new_page()
