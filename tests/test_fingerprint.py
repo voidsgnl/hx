@@ -3,6 +3,7 @@ import pytest
 from hx.client import TargetClient
 from hx.fingerprint import check_fingerprint_match
 from hx.oracle import ORACLE_INIT_JS
+from hx.versions import CHROMIUM_MAJOR, CURL_CFFI_IMPERSONATE
 
 BASE = "http://localhost:5000"
 
@@ -16,13 +17,15 @@ async def client():
     await c.close()
 
 
-async def test_fingerprint_check_runs(client):
-    result = await check_fingerprint_match(client.page, "chrome124")
+async def test_fingerprint_matches(client):
+    result = await check_fingerprint_match(client.page, CURL_CFFI_IMPERSONATE)
     assert result.browser_version is not None
-    assert result.impersonate_version == "124"
-    if not result.matches:
-        assert result.warning is not None
-        assert "FINGERPRINT MISMATCH" in result.warning
+    assert result.browser_version == CHROMIUM_MAJOR, (
+        f"Playwright Chromium drifted: expected {CHROMIUM_MAJOR}, "
+        f"got {result.browser_version}"
+    )
+    assert result.impersonate_version == CHROMIUM_MAJOR
+    assert result.matches is True
 
 
 async def test_fingerprint_mismatch_warns(client):

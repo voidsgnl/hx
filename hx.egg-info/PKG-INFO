@@ -5,8 +5,8 @@ Summary: Execution-oracle XSS scanner with browser-based WAF pass
 Requires-Python: >=3.11
 Requires-Dist: typer>=0.12
 Requires-Dist: rich>=13.7
-Requires-Dist: playwright>=1.44
-Requires-Dist: curl_cffi>=0.7
+Requires-Dist: playwright==1.49.1
+Requires-Dist: curl_cffi==0.17.0
 Provides-Extra: dev
 Requires-Dist: pytest>=8; extra == "dev"
 Requires-Dist: pytest-asyncio>=0.23; extra == "dev"

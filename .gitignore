@@ -1,0 +1,85 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# --- Virtual envs ---
+.venv/
+venv/
+env/
+ENV/
+
+# --- Testing / coverage ---
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+
+# --- Type / lint caches ---
+.mypy_cache/
+.ruff_cache/
+.pyright/
+
+# --- Playwright ---
+# browser binaries are installed to ~/.cache/ms-playwright by default,
+# but ignore any local ones if someone sets PLAYWRIGHT_BROWSERS_PATH=.
+playwright-report/
+test-results/
+.pw-browsers/
+
+# --- hx runtime artifacts ---
+# persistent Chromium profiles created by TargetClient (cookie jars,
+# localStorage, session state). NEVER commit — contains live cf_clearance,
+# session cookies, and target-specific fingerprints.
+/tmp/hx-profile/
+/tmp/hx-test-profile/
+/tmp/hx-payload-profile/
+/tmp/hx-post-profile/
+/tmp/hx-fp-profile/
+/tmp/hx-check/
+.hx-profiles/
+*.hx-profile/
+
+# scan outputs
+hx-results/
+*.hx.json
+
+# --- Harness ---
+# if run.sh writes pid/log files
+tests/harness/*.log
+tests/harness/*.pid
+
+# --- Secrets / env ---
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# --- Editor / OS ---
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db

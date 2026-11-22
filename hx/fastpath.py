@@ -10,6 +10,7 @@ cookie is invalidated -> 403. Pin both to the same chrome version string.
 """
 from dataclasses import dataclass
 from curl_cffi import requests as cffi
+from hx.versions import CURL_CFFI_IMPERSONATE
 
 
 @dataclass
@@ -21,7 +22,7 @@ class Candidate:
 
 
 class FastPath:
-    def __init__(self, impersonate: str = "chrome124", proxy: str | None = None):
+    def __init__(self, impersonate: str = CURL_CFFI_IMPERSONATE, proxy: str | None = None):
         self.impersonate = impersonate
         self.proxies = {"https": proxy, "http": proxy} if proxy else None
         self._allowed_domains: set[str] = set()
