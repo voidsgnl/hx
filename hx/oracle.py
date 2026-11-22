@@ -1,8 +1,8 @@
-"""Execution oracle: prove XSS by matching execution to a unique payload marker.
+"""Execution oracle: prove XSS with a payload-specific browser callback.
 
-A probe ID is embedded in the payload itself. Browser events are attributed to
-that probe only when the event carries the same ID in its execution details;
-the session ID alone is never sufficient evidence.
+Each payload embeds a fresh probe ID and calls the protected __hx_proof
+callback. Generic page JavaScript activity is recorded for diagnostics but
+cannot, by itself, produce a confirmed XSS finding.
 """
 import asyncio
 import uuid
@@ -11,46 +11,53 @@ from urllib.parse import urlparse
 
 
 ORACLE_INIT_JS = """
-window.__hx_active_id = null;
-try {
-  window.__hx_active_id = sessionStorage.getItem("__hx_active_payload_id");
-} catch (_) {}
-window.__hx_hits = [];
-window.__hx_record = function(kind, detail) {
-  window.__hx_hits.push({
-    kind: kind,
-    detail: String(detail).slice(0, 300),
-    id: window.__hx_active_id,
-    ts: Date.now(),
-  });
-};
-window.alert = function(m) { window.__hx_record("alert", m); };
-window.confirm = function(m) {
-  window.__hx_record("confirm", m);
-  return true;
-};
-window.prompt = function(m) {
-  window.__hx_record("prompt", m);
-  return "";
-};
-Object.defineProperty(window, "__hx_proof", {
-  configurable: false,
-  writable: false,
-  value: function(id) {
-    if (typeof id === "string" && id === window.__hx_active_id) {
-      window.__hx_record("proof", id);
+(() => {
+  const hits = [];
+  const activeId = () => {
+    try {
+      return sessionStorage.getItem("__hx_active_payload_id");
+    } catch (_) {
+      return null;
     }
-  },
-});
-const _eval = window.eval;
-window.eval = function(c) {
-  const source = String(c);
-  const result = _eval(c);
-  if (!window.__hx_internal) {
-    window.__hx_record("eval", source);
-  }
-  return result;
-};
+  };
+  const record = (kind, detail) => {
+    hits.push({
+      kind,
+      detail: String(detail).slice(0, 300),
+      id: activeId(),
+      ts: Date.now(),
+    });
+  };
+
+  Object.defineProperty(window, "__hx_hits", {
+    configurable: false,
+    get: () => hits,
+  });
+  Object.defineProperty(window, "__hx_reset", {
+    configurable: false,
+    writable: false,
+    value: () => { hits.length = 0; },
+  });
+  Object.defineProperty(window, "__hx_proof", {
+    configurable: false,
+    writable: false,
+    value: (id) => {
+      if (typeof id === "string" && id === activeId()) {
+        record("proof", id);
+      }
+    },
+  });
+
+  window.alert = (message) => record("alert", message);
+  window.confirm = (message) => {
+    record("confirm", message);
+    return true;
+  };
+  window.prompt = (message) => {
+    record("prompt", message);
+    return "";
+  };
+})();
 """
 
 
@@ -77,18 +84,14 @@ async def _prepare_probe(page, payload_id: str) -> None:
     await page.evaluate(
         """({id}) => {
           sessionStorage.setItem("__hx_active_payload_id", id);
-          window.__hx_active_id = id;
-          window.__hx_hits = [];
+          window.__hx_reset();
         }""",
         {"id": payload_id},
     )
 
 
 async def _read_hits(page) -> list:
-    raw = await page.evaluate(
-        "() => { window.__hx_internal = true; return window.__hx_hits || []; }"
-    )
-    await page.evaluate("() => { window.__hx_internal = false; }")
+    raw = await page.evaluate("() => window.__hx_hits || []")
     return raw or []
 
 
@@ -99,7 +102,7 @@ async def _collect_result(page, payload_id: str) -> ProbeResult:
         for h in raw
     ]
     # Only the protected callback embedded in our payload can prove execution.
-    # Generic alerts/evals are telemetry, never proof by themselves.
+    # Generic alerts, prompts, and other page activity are telemetry only.
     proven = any(
         hit.kind == "proof"
         and hit.payload_id == payload_id
@@ -180,18 +183,12 @@ async def probe_post_json(
     try:
         await page.evaluate(
             """async ({action, body}) => {
-              let text;
-              window.__hx_internal = true;
-              try {
-                const response = await fetch(action, {
-                  method: "POST",
-                  headers: {"Content-Type": "application/json"},
-                  body: JSON.stringify(body)
-                });
-                text = await response.text();
-              } finally {
-                window.__hx_internal = false;
-              }
+              const response = await fetch(action, {
+                method: "POST",
+                headers: {"Content-Type": "application/json"},
+                body: JSON.stringify(body)
+              });
+              const text = await response.text();
               document.open();
               document.write(text);
               document.close();
