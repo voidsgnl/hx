@@ -9,6 +9,7 @@ The impersonation profile MUST match the Playwright Chromium version, or the
 cookie is invalidated -> 403. Pin both to the same chrome version string.
 """
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from urllib.parse import urljoin, urlparse
 from curl_cffi import requests as cffi
 from hx.versions import CURL_CFFI_IMPERSONATE
@@ -36,10 +37,13 @@ class FastPath:
 
     def _request(self, method: str, url: str, **kwargs):
         """Send requests one hop at a time so redirects consume budget too."""
-        original_host = urlparse(url).hostname
+        original_origin = urlparse(url)[:4]
+        browser_cookies = kwargs.pop("browser_cookies", None)
         request_kwargs = dict(kwargs)
         for redirect_count in range(11):
             self._reserve_request()
+            if browser_cookies is not None:
+                request_kwargs["cookies"] = self._cookies(browser_cookies, url)
             response = cffi.request(
                 method, url, allow_redirects=False, **request_kwargs
             )
@@ -50,8 +54,9 @@ class FastPath:
                 return response
 
             next_url = urljoin(url, location)
-            if urlparse(next_url).hostname != original_host:
-                request_kwargs["cookies"] = None
+            if urlparse(next_url)[:4] != original_origin:
+                # Re-evaluate cookies for the new origin on the next hop.
+                browser_cookies = None
             if response.status_code == 303 or (
                 response.status_code in (301, 302) and method.upper() == "POST"
             ):
@@ -61,20 +66,68 @@ class FastPath:
             url = next_url
         return response
 
-    def _cookies(self, browser_cookies: list[dict]) -> dict:
-        return {c["name"]: c["value"] for c in browser_cookies
-                if c.get("domain", "").lstrip(".") in self._allowed_domains}
+    @staticmethod
+    def _domain_matches(host: str, domain: str) -> bool:
+        """RFC-style domain match: exact host or a dot-delimited subdomain."""
+        host = host.lower().rstrip(".")
+        domain = domain.lower().lstrip(".").rstrip(".")
+        return host == domain or host.endswith("." + domain)
+
+    def _cookies(self, browser_cookies: list[dict], url: str) -> dict:
+        """Return only cookies valid for this request URL and target domain."""
+        parsed = urlparse(url)
+        host = (parsed.hostname or "").lower().rstrip(".")
+        path = parsed.path or "/"
+        is_secure = parsed.scheme.lower() == "https"
+        now = datetime.now(timezone.utc).timestamp()
+        selected = {}
+
+        for cookie in browser_cookies:
+            raw_domain = cookie.get("domain", "")
+            if not raw_domain:
+                continue
+            domain_cookie = raw_domain.startswith(".")
+            cookie_domain = raw_domain.lstrip(".").lower().rstrip(".")
+            if not cookie_domain:
+                continue
+
+            # Domain cookies may cover subdomains; host-only cookies may not.
+            request_match = (
+                self._domain_matches(host, cookie_domain)
+                if domain_cookie else host == cookie_domain
+            )
+            target_match = any(
+                self._domain_matches(allowed, cookie_domain)
+                if domain_cookie else allowed == cookie_domain
+                for allowed in self._allowed_domains
+            )
+            if not request_match or not target_match:
+                continue
+            if cookie.get("secure") and not is_secure:
+                continue
+            cookie_path = cookie.get("path") or "/"
+            if not path.startswith(cookie_path):
+                continue
+            if (len(path) > len(cookie_path)
+                    and not cookie_path.endswith("/")
+                    and path[len(cookie_path)] != "/"):
+                continue
+            expires = cookie.get("expires", -1)
+            if expires not in (None, -1, 0) and expires <= now:
+                continue
+            selected[cookie["name"]] = cookie["value"]
+        return selected
 
     def set_allowed_domains(self, domains: set[str]):
-        # e.g. {"localhost", "example.com"} — derived from the target origin
-        self._allowed_domains = {d.lstrip(".") for d in domains}
+        # Hosts belonging to the scanned target; cookie scope is checked separately.
+        self._allowed_domains = {d.lower().lstrip(".").rstrip(".") for d in domains}
 
     def fetch_body(self, url: str, browser_cookies: list[dict]) -> str:
         """Fetch a response body for context detection; never prove execution."""
         r = self._request("GET",
             url,
             impersonate=self.impersonate,
-            cookies=self._cookies(browser_cookies) if browser_cookies else None,
+            browser_cookies=browser_cookies,
             proxies=self.proxies,
             http_version="v1",
             timeout=15,
