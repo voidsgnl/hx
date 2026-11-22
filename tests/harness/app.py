@@ -48,6 +48,12 @@ def dom():
 </script>
 </body></html>"""
 
+@app.route("/unrelated-alert")
+def unrelated_alert():
+    # A page-level script execution must not be mistaken for probe execution.
+    return "<html><body><script>alert('unrelated-page-script')</script></body></html>"
+
+
 @app.route("/safe")
 def safe():
     from markupsafe import escape
