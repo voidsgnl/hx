@@ -99,16 +99,21 @@ async def scan(target: str | RequestSpec, *, proxy: str | None = None,
     pacer = Pacer(budget=budget)
 
     client = TargetClient(origin, proxy=proxy)
-    await client.start(oracle_init_script=ORACLE_INIT_JS)
+    await client.start(
+        oracle_init_script=ORACLE_INIT_JS,
+        request_guard=pacer.reserve,
+    )
     try:
-        await pacer.wait()
         reached = await client.warm()
         result.reached_app = reached
         if not reached:
             return result
 
+        if client.budget_exhausted:
+            raise BudgetExhausted("request budget exhausted during browser warm-up")
+
         cookies = await client.cookies()
-        fp = FastPath(proxy=proxy)
+        fp = FastPath(proxy=proxy, request_guard=pacer.reserve)
         fp.set_allowed_domains({parsed.netloc.split(":")[0]})
         fp_check = await check_fingerprint_match(client.page, fp.impersonate)
         result.fingerprint = {
@@ -125,24 +130,36 @@ async def scan(target: str | RequestSpec, *, proxy: str | None = None,
         for param in params:
             marker = _marker_for(param)
             probe_spec = _apply_marker(spec, param, marker)
-            await pacer.wait()
+            await pacer.pause()
             if probe_spec.method == "GET":
                 c = fp.find_reflection(probe_spec.url, marker, cookies)
-                body = fp.fetch_body(probe_spec.url, cookies) if c else ""
+                if c:
+                    await pacer.pause()
+                    body = fp.fetch_body(probe_spec.url, cookies)
+                else:
+                    body = ""
             elif probe_spec.method == "POST":
                 c = fp.find_reflection_post_form(
                     probe_spec.url, probe_spec.form or {}, marker, cookies
                 )
-                body = fp.fetch_body_post_form(
-                    probe_spec.url, probe_spec.form or {}, cookies
-                ) if c else ""
+                if c:
+                    await pacer.pause()
+                    body = fp.fetch_body_post_form(
+                        probe_spec.url, probe_spec.form or {}, cookies
+                    )
+                else:
+                    body = ""
             else:
                 c = fp.find_reflection_post_json(
                     probe_spec.url, probe_spec.json_body or {}, marker, cookies
                 )
-                body = fp.fetch_body_post_json(
-                    probe_spec.url, probe_spec.json_body or {}, cookies
-                ) if c else ""
+                if c:
+                    await pacer.pause()
+                    body = fp.fetch_body_post_json(
+                        probe_spec.url, probe_spec.json_body or {}, cookies
+                    )
+                else:
+                    body = ""
             if c:
                 result.reflections.append(c)
                 candidates.append((param, c, body))
@@ -158,7 +175,7 @@ async def scan(target: str | RequestSpec, *, proxy: str | None = None,
                     det.context, pid_marker=payload_id
                 )[payload_index]
                 payload_spec = _apply_marker(spec, param, payload)
-                await pacer.wait()
+                await pacer.pause()
                 if payload_spec.method == "GET":
                     pr = await probe(
                         client.page, payload_spec.url, payload,
@@ -179,6 +196,10 @@ async def scan(target: str | RequestSpec, *, proxy: str | None = None,
                         payload_id=payload_id,
                     )
                     finding_url = payload_spec.url
+                if client.budget_exhausted:
+                    raise BudgetExhausted(
+                        "request budget exhausted during browser oracle probe"
+                    )
                 if pr.proven:
                     result.findings.append(Finding(
                         param=param,
@@ -196,4 +217,6 @@ async def scan(target: str | RequestSpec, *, proxy: str | None = None,
         result.requests_used = pacer.used
         return result
     finally:
+        result.requests_used = pacer.used
+        result.budget_exhausted = result.budget_exhausted or pacer.exhausted or client.budget_exhausted
         await client.close()
