@@ -5,7 +5,7 @@ from hx.oracle import probe_post_form, probe_post_json, ORACLE_INIT_JS
 from hx.scanner import RequestSpec, scan
 
 BASE = "http://localhost:5000"
-PAYLOAD = "<script>alert('hxpost')</script>"
+PAYLOAD = "<script>window.__hx_proof('hxpost')</script>"
 
 
 @pytest.fixture
