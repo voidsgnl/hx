@@ -18,8 +18,8 @@ async def client():
     await c.close()
 
 
-REFLECT_PAYLOAD = "<script>alert('hxprobe1')</script>"
-DOM_PAYLOAD = "<img src=x onerror=alert('hxprobe2')>"
+REFLECT_PAYLOAD = "<script>window.__hx_proof('hxprobe1')</script>"
+DOM_PAYLOAD = "<img src=x onerror=window.__hx_proof('hxprobe2')>"
 
 
 async def test_reflect_proves(client):
@@ -57,7 +57,7 @@ async def test_unrelated_page_execution_does_not_prove(client):
     r = await probe(
         client.page,
         url,
-        "<script>alert('hxexpected')</script>",
+        "<script>window.__hx_proof('hxexpected')</script>",
         payload_id="hxexpected",
     )
     assert not r.proven, f"unrelated JavaScript was attributed to the probe: {r.hits}"
