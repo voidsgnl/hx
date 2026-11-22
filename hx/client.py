@@ -37,12 +37,13 @@ class TargetClient:
         self.request_guard = None
         self.budget_exhausted = False
 
-    async def start(self, oracle_init_script: str, request_guard=None):
+    async def start(self, oracle_init_script: str, request_guard=None,
+                    headless: bool = True):
         self.request_guard = request_guard
         Path(self.profile_dir).mkdir(parents=True, exist_ok=True)
         self._pw = await async_playwright().start()
         launch_kwargs = dict(
-            headless=True,
+            headless=headless,
             args=[
                 "--disable-blink-features=AutomationControlled",
                 "--no-sandbox",
