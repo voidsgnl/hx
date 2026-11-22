@@ -4,7 +4,7 @@ from urllib.parse import quote
 
 from hx.client import TargetClient
 from hx.fastpath import FastPath
-from hx.oracle import probe, ORACLE_INIT_JS
+from hx.oracle import probe, ORACLE_INIT_JS, make_payload_id
 from hx.payloads import detect_context, payloads_for, Context
 
 BASE = "http://localhost:5000"
@@ -45,9 +45,14 @@ async def test_context_detected_and_proven(client, path, expected_ctx):
     )
 
     proven = False
-    for payload in payloads_for(det.context):
+    templates = payloads_for(det.context)
+    for index in range(len(templates)):
+        payload_id = make_payload_id()
+        payload = payloads_for(det.context, pid_marker=payload_id)[index]
         purl = f"{BASE}{path}?q={quote(payload)}"
-        r = await probe(client.page, purl, payload)
+        r = await probe(
+            client.page, purl, payload, payload_id=payload_id
+        )
         if r.proven:
             proven = True
             break
@@ -71,15 +76,19 @@ async def test_eval_sink_still_proves(client, path, expected_ctx):
     assert det.context == expected_ctx
 
     proven = False
-    for payload in payloads_for(det.context):
+    templates = payloads_for(det.context)
+    for index in range(len(templates)):
+        payload_id = make_payload_id()
+        payload = payloads_for(det.context, pid_marker=payload_id)[index]
         purl = f"{BASE}{path}?q={quote(payload)}"
-        r = await probe(client.page, purl, payload)
+        r = await probe(
+            client.page, purl, payload, payload_id=payload_id
+        )
         if r.proven:
-            hit_kinds = {
-                h.kind for h in r.hits
-                if h.payload_id == r.payload_id
-            }
-            assert hit_kinds & {"alert", "confirm", "prompt"}
+            assert any(
+                h.kind == "proof" and h.detail == payload_id
+                for h in r.hits
+            )
             proven = True
             break
     assert proven, f"{path}: no JS_STRING_SINGLE payload proved"
