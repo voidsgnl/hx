@@ -1,12 +1,4 @@
-"""The oracle gate. Ground-truth harness endpoints.
-
-Rules:
-  /reflect  -> MUST prove
-  /dom      -> MUST prove
-  /safe     -> MUST NOT prove (escaped)
-  /attr     -> MUST NOT prove (escaped attr)
-"""
-import asyncio
+"""The oracle gate and payload-attribution regression tests."""
 import pytest
 from urllib.parse import quote
 
@@ -14,6 +6,7 @@ from hx.client import TargetClient
 from hx.oracle import probe, ORACLE_INIT_JS
 
 BASE = "http://localhost:5000"
+
 
 @pytest.fixture
 async def client():
@@ -24,25 +17,47 @@ async def client():
     yield c
     await c.close()
 
+
 REFLECT_PAYLOAD = "<script>alert('hxprobe1')</script>"
 DOM_PAYLOAD = "<img src=x onerror=alert('hxprobe2')>"
 
+
 async def test_reflect_proves(client):
     url = f"{BASE}/reflect?q={quote(REFLECT_PAYLOAD)}"
-    r = await probe(client.page, url, REFLECT_PAYLOAD)
+    r = await probe(client.page, url, REFLECT_PAYLOAD, payload_id="hxprobe1")
     assert r.proven, f"expected proven reflected XSS, hits={r.hits}"
+
 
 async def test_dom_proves(client):
     url = f"{BASE}/dom?q={quote(DOM_PAYLOAD)}"
-    r = await probe(client.page, url, DOM_PAYLOAD)
+    r = await probe(client.page, url, DOM_PAYLOAD, payload_id="hxprobe2")
     assert r.proven, f"expected proven DOM XSS, hits={r.hits}"
+
 
 async def test_safe_does_not_prove(client):
     url = f"{BASE}/safe?q={quote(REFLECT_PAYLOAD)}"
-    r = await probe(client.page, url, REFLECT_PAYLOAD)
+    r = await probe(client.page, url, REFLECT_PAYLOAD, payload_id="hxprobe1")
     assert not r.proven, f"FALSE POSITIVE on /safe, hits={r.hits}"
+
 
 async def test_attr_does_not_prove(client):
     url = f"{BASE}/attr?q={quote(REFLECT_PAYLOAD)}"
-    r = await probe(client.page, url, REFLECT_PAYLOAD)
+    r = await probe(client.page, url, REFLECT_PAYLOAD, payload_id="hxprobe1")
     assert not r.proven, f"FALSE POSITIVE on /attr, hits={r.hits}"
+
+
+async def test_different_executed_marker_does_not_prove(client):
+    url = f"{BASE}/reflect?q={quote(REFLECT_PAYLOAD)}"
+    r = await probe(client.page, url, REFLECT_PAYLOAD, payload_id="hxnotthesame")
+    assert not r.proven, f"wrong payload marker was accepted, hits={r.hits}"
+
+
+async def test_unrelated_page_execution_does_not_prove(client):
+    url = f"{BASE}/unrelated-alert"
+    r = await probe(
+        client.page,
+        url,
+        "<script>alert('hxexpected')</script>",
+        payload_id="hxexpected",
+    )
+    assert not r.proven, f"unrelated JavaScript was attributed to the probe: {r.hits}"
