@@ -37,8 +37,6 @@ class FastPath:
 
     def _request(self, method: str, url: str, **kwargs):
         """Send requests one hop at a time so redirects consume budget too."""
-        initial = urlparse(url)
-        original_origin = (initial.scheme, initial.hostname, initial.port)
         browser_cookies = kwargs.pop("browser_cookies", None)
         request_kwargs = dict(kwargs)
         for redirect_count in range(11):
@@ -55,10 +53,6 @@ class FastPath:
                 return response
 
             next_url = urljoin(url, location)
-            next_parts = urlparse(next_url)
-            next_origin = (
-                next_parts.scheme, next_parts.hostname, next_parts.port
-            )
             # Cookie scope is recalculated for every redirect destination.
             # The target-domain allowlist prevents cross-origin cookie leakage.
             if response.status_code == 303 or (
@@ -145,7 +139,7 @@ class FastPath:
             url,
             data=fields,
             impersonate=self.impersonate,
-            cookies=self._cookies(browser_cookies) if browser_cookies else None,
+            browser_cookies=browser_cookies,
             proxies=self.proxies,
             http_version="v1",
             timeout=15,
@@ -162,7 +156,7 @@ class FastPath:
             url,
             json=body,
             impersonate=self.impersonate,
-            cookies=self._cookies(browser_cookies) if browser_cookies else None,
+            browser_cookies=browser_cookies,
             proxies=self.proxies,
             http_version="v1",
             timeout=15,
@@ -178,7 +172,7 @@ class FastPath:
             url,
             data=fields,
             impersonate=self.impersonate,
-            cookies=self._cookies(browser_cookies) if browser_cookies else None,
+            browser_cookies=browser_cookies,
             proxies=self.proxies,
             http_version="v1",
             timeout=15,
@@ -191,7 +185,7 @@ class FastPath:
             url,
             json=body,
             impersonate=self.impersonate,
-            cookies=self._cookies(browser_cookies) if browser_cookies else None,
+            browser_cookies=browser_cookies,
             proxies=self.proxies,
             http_version="v1",
             timeout=15,
@@ -204,7 +198,7 @@ class FastPath:
         r = self._request("GET",
             url,
             impersonate=self.impersonate,
-            cookies=self._cookies(browser_cookies) if browser_cookies else None,
+            browser_cookies=browser_cookies,
             proxies=self.proxies,
             http_version="v1",
             timeout=15,
