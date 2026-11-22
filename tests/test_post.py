@@ -22,6 +22,7 @@ async def test_post_form_proves(client):
         client.page,
         f"{BASE}/post-reflect",
         {"q": PAYLOAD},
+        payload_id="hxpost",
     )
     assert r.proven, f"POST form not proven, hits={r.hits}"
 
@@ -31,6 +32,7 @@ async def test_post_json_proves(client):
         client.page,
         f"{BASE}/post-json",
         {"q": PAYLOAD},
+        payload_id="hxpost",
     )
     assert r.proven, f"POST JSON not proven, hits={r.hits}"
 
@@ -40,8 +42,19 @@ async def test_post_safe_does_not_prove(client):
         client.page,
         f"{BASE}/post-safe",
         {"q": PAYLOAD},
+        payload_id="hxpost",
     )
     assert not r.proven, f"FALSE POSITIVE on /post-safe, hits={r.hits}"
+
+
+async def test_post_wrong_marker_does_not_prove(client):
+    r = await probe_post_form(
+        client.page,
+        f"{BASE}/post-reflect",
+        {"q": PAYLOAD},
+        payload_id="hxnotthesame",
+    )
+    assert not r.proven, f"wrong POST payload marker was accepted, hits={r.hits}"
 
 
 async def test_scanner_post_form_end_to_end():
