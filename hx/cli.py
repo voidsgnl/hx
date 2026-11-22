@@ -33,6 +33,7 @@ def scan_cmd(
     budget: int = typer.Option(120, help="Max requests per scan"),
     proxy: Optional[str] = typer.Option(None, help="Proxy URL, e.g. http://127.0.0.1:8080"),
     json_out: bool = typer.Option(False, "--json", help="Emit JSON instead of a table"),
+    headed: bool = typer.Option(False, "--headed", help="Show the Chromium browser window"),
 ):
     """Scan a URL for reflected/DOM XSS, proving findings via browser execution."""
     if data and json_body:
@@ -48,7 +49,9 @@ def scan_cmd(
         spec = RequestSpec(method="POST", url=url, form=form)
     else:
         spec = RequestSpec(method="GET", url=url)
-    res = asyncio.run(scan(spec, proxy=proxy, budget=budget))
+    res = asyncio.run(scan(
+        spec, proxy=proxy, budget=budget, headless=not headed
+    ))
 
     if json_out:
         payload = {
@@ -105,6 +108,7 @@ def discover_cmd(
     url: str = typer.Argument(..., help="Page URL whose forms should be listed"),
     proxy: Optional[str] = typer.Option(None, help="Proxy URL"),
     json_out: bool = typer.Option(False, "--json", help="Emit JSON instead of a table"),
+    headed: bool = typer.Option(False, "--headed", help="Show the Chromium browser window"),
 ):
     """List forms and field metadata without submitting them."""
 
@@ -112,7 +116,10 @@ def discover_cmd(
         parsed = urlparse(url)
         origin = f"{parsed.scheme}://{parsed.netloc}"
         client = TargetClient(origin, proxy=proxy)
-        await client.start(oracle_init_script=ORACLE_INIT_JS)
+        await client.start(
+            oracle_init_script=ORACLE_INIT_JS,
+            headless=not headed,
+        )
         try:
             if not await client.warm():
                 return None
