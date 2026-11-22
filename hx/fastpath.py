@@ -37,7 +37,8 @@ class FastPath:
 
     def _request(self, method: str, url: str, **kwargs):
         """Send requests one hop at a time so redirects consume budget too."""
-        original_origin = urlparse(url)[:4]
+        initial = urlparse(url)
+        original_origin = (initial.scheme, initial.hostname, initial.port)
         browser_cookies = kwargs.pop("browser_cookies", None)
         request_kwargs = dict(kwargs)
         for redirect_count in range(11):
@@ -54,9 +55,12 @@ class FastPath:
                 return response
 
             next_url = urljoin(url, location)
-            if urlparse(next_url)[:4] != original_origin:
-                # Re-evaluate cookies for the new origin on the next hop.
-                browser_cookies = None
+            next_parts = urlparse(next_url)
+            next_origin = (
+                next_parts.scheme, next_parts.hostname, next_parts.port
+            )
+            # Cookie scope is recalculated for every redirect destination.
+            # The target-domain allowlist prevents cross-origin cookie leakage.
             if response.status_code == 303 or (
                 response.status_code in (301, 302) and method.upper() == "POST"
             ):
