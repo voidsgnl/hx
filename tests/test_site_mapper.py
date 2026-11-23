@@ -7,6 +7,7 @@ from hx.site_mapper import (
     _behaviour_for,
     _discovery_allowances,
     _is_framework_navigation_request,
+    _is_framework_prefetch_request,
     _is_in_scope,
     _mapping_request_allowed,
     _page_key,
@@ -47,7 +48,11 @@ def test_mapping_request_filter_blocks_framework_gets_before_budgeting():
         resource_type="fetch",
         method="GET",
         url="https://example.test/about?_rsc=abc",
-        headers={"rsc": "1", "accept": "text/x-component"},
+        headers={
+            "rsc": "1",
+            "accept": "text/x-component",
+            "next-router-prefetch": "1",
+        },
     )
     server_action = SimpleNamespace(
         resource_type="fetch",
@@ -61,9 +66,20 @@ def test_mapping_request_filter_blocks_framework_gets_before_budgeting():
         url="https://example.test/api/search?q=term",
         headers={"accept": "application/json"},
     )
+    assert _is_framework_prefetch_request(
+        rsc_prefetch.url, rsc_prefetch.headers, rsc_prefetch.method
+    )
     assert not _mapping_request_allowed(rsc_prefetch)
     assert _mapping_request_allowed(server_action)
     assert _mapping_request_allowed(application_api)
+
+    # A normal RSC navigation is not a prefetch and must remain available.
+    assert _mapping_request_allowed(SimpleNamespace(
+        resource_type="fetch",
+        method="GET",
+        url="https://example.test/about?_rsc=abc",
+        headers={"rsc": "1", "accept": "text/x-component"},
+    ))
 
 
 def test_discovery_allowances_preserve_page_and_interaction_capacity():
