@@ -5,7 +5,7 @@ It never submits forms or sends vulnerability payloads.
 """
 from __future__ import annotations
 
-from collections import defaultdict, deque
+from collections import deque
 from dataclasses import asdict, dataclass, field
 from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
 
