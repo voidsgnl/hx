@@ -101,7 +101,10 @@ def _apply_marker(spec: RequestSpec, param: str, value: str) -> RequestSpec:
 
 
 async def scan(target: str | RequestSpec, *, proxy: str | None = None,
-               budget: int = 120, headless: bool = True) -> ScanResult:
+               budget: int = 120, headless: bool = True,
+               _client: TargetClient | None = None,
+               _pacer: Pacer | None = None,
+               _warm: bool = True) -> ScanResult:
     spec = target if isinstance(target, RequestSpec) else RequestSpec(method="GET", url=target)
     parsed = urlparse(spec.url)
     origin = f"{parsed.scheme}://{parsed.netloc}"
@@ -118,16 +121,24 @@ async def scan(target: str | RequestSpec, *, proxy: str | None = None,
         raise ValueError(f"unknown method {spec.method}")
 
     result = ScanResult(target=spec.url, reached_app=False)
-    pacer = Pacer(budget=budget)
-    client = TargetClient(origin, proxy=proxy)
-    await client.start(
-        oracle_init_script=ORACLE_INIT_JS,
-        request_guard=pacer.reserve,
-        headless=headless,
-    )
+    pacer = _pacer or Pacer(budget=budget)
+    owns_client = _client is None
+    client = _client or TargetClient(origin, proxy=proxy)
+    request_start = pacer.used
+    if owns_client:
+        await client.start(
+            oracle_init_script=ORACLE_INIT_JS,
+            request_guard=pacer.reserve,
+            headless=headless,
+        )
+    else:
+        client.request_guard = pacer.reserve
     try:
-        await pacer.pause()
-        reached = await client.warm()
+        if _warm:
+            await pacer.pause()
+            reached = await client.warm()
+        else:
+            reached = True
         result.reached_app = reached
         if not reached:
             return result
@@ -237,15 +248,16 @@ async def scan(target: str | RequestSpec, *, proxy: str | None = None,
                     ))
                     break
 
-        result.requests_used = pacer.used
+        result.requests_used = pacer.used - request_start
         return result
     except BudgetExhausted:
         result.budget_exhausted = True
-        result.requests_used = pacer.used
+        result.requests_used = pacer.used - request_start
         return result
     finally:
-        result.requests_used = pacer.used
+        result.requests_used = pacer.used - request_start
         result.budget_exhausted = (
             result.budget_exhausted or pacer.exhausted or client.budget_exhausted
         )
-        await client.close()
+        if owns_client:
+            await client.close()
