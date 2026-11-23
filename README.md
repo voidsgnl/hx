@@ -222,9 +222,18 @@ HTML POST forms, not browser-observed POST API endpoints. Applications that
 depend on sessionStorage or custom JavaScript-only CSRF headers may need
 additional session/request integration.
 
-SQL injection, SSRF, open-redirect, authentication-logic, and file-upload
-vulnerability engines are not implemented yet. The engine registry is the
-extension point for adding their own detection and verification logic.
+### Current vulnerability engines
+
+- **XSS** — reflected input discovery followed by payload-specific browser
+  execution verification. Supports explicit GET/POST/JSON targets and
+  opt-in website-discovered HTML POST forms.
+- **Open redirect** — tests recognized redirect parameters with a reserved
+  `.invalid` canary and verifies the HTTP `Location` header without following
+  the external redirect.
+
+SQL injection, SSRF, authentication-logic, and file-upload vulnerability
+engines are not implemented yet. The engine registry is the extension point
+for adding their own detection and verification logic.
 
 ### Scan a GET URL
 
