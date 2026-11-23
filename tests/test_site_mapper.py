@@ -18,6 +18,11 @@ def test_scope_is_exact_origin_not_just_hostname():
     assert not _is_in_scope("http://example.test:443/", base)
 
 
+def test_scope_normalizes_default_ports():
+    assert _is_in_scope("http://example.test:80/a", "http://example.test/")
+    assert _is_in_scope("https://example.test:443/a", "https://example.test/")
+
+
 def test_page_key_deduplicates_values_but_preserves_parameter_names():
     first = _page_key("https://example.test/search?q=alice&page=1")
     second = _page_key("https://example.test/search?page=9&q=bob")
