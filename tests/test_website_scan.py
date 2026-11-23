@@ -3,6 +3,7 @@ import pytest
 from hx.site_mapper import SiteMapResult, DiscoveredPage
 from hx.website_scan import _get_form_target, _targets_from_map, scan_website
 from hx.engines import AttackSurface, default_registry
+import hx.website_scan as website_scan_module
 
 
 def test_get_form_target_uses_only_injectable_non_password_fields():
@@ -70,8 +71,24 @@ def test_engine_registry_selects_only_engines_that_support_a_surface():
 
 
 @pytest.mark.asyncio
-async def test_website_scan_maps_and_tests_get_form_inputs():
-    result = await scan_website(
+async def test_website_scan_maps_and_tests_get_form_inputs(monkeypatch):
+    starts = 0
+    closes = 0
+    original_client = website_scan_module.TargetClient
+
+    class CountingClient(original_client):
+        async def start(self, *args, **kwargs):
+            nonlocal starts
+            starts += 1
+            return await super().start(*args, **kwargs)
+
+        async def close(self):
+            nonlocal closes
+            closes += 1
+            return await super().close()
+
+    monkeypatch.setattr(website_scan_module, "TargetClient", CountingClient)
+    result = await website_scan_module.scan_website(
         "http://localhost:5000/discovery",
         budget=100,
         max_pages=5,
@@ -82,4 +99,6 @@ async def test_website_scan_maps_and_tests_get_form_inputs():
     assert result.skipped_post_forms == 1
     assert result.engines_run == ["xss"]
     assert result.requests_used <= 100
+    assert starts == 1
+    assert closes == 1
     assert any(finding.param == "q" for finding in result.findings)
