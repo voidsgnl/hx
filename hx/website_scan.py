@@ -21,6 +21,7 @@ class WebsiteScanResult:
     scans: list[ScanResult] = field(default_factory=list)
     tested_targets: list[str] = field(default_factory=list)
     skipped_post_forms: int = 0
+    skipped_post_endpoints: int = 0
     requests_used: int = 0
     budget_exhausted: bool = False
 
@@ -34,6 +35,7 @@ class WebsiteScanResult:
             "site_map": self.site_map.to_dict(),
             "tested_targets": self.tested_targets,
             "skipped_post_forms": self.skipped_post_forms,
+            "skipped_post_endpoints": self.skipped_post_endpoints,
             "requests_used": self.requests_used,
             "budget_exhausted": self.budget_exhausted,
             "scans": [
@@ -77,10 +79,11 @@ def _get_form_target(action: str, fields: list[dict]) -> str | None:
     return urlunsplit(parts._replace(query=urlencode(query, doseq=True)))
 
 
-def _targets_from_map(site_map: SiteMapResult) -> tuple[list[str], int]:
+def _targets_from_map(site_map: SiteMapResult) -> tuple[list[str], int, int]:
     targets: list[str] = []
     seen: set[str] = set()
     skipped_post_forms = 0
+    skipped_post_endpoints = 0
 
     def add(url: str):
         key = _page_key(url)
@@ -99,7 +102,13 @@ def _targets_from_map(site_map: SiteMapResult) -> tuple[list[str], int]:
             if target and _is_in_scope(target, site_map.target):
                 add(target)
 
-    return targets, skipped_post_forms
+    for endpoint in site_map.endpoints:
+        if endpoint.method == "GET" and endpoint.query_parameters:
+            add(endpoint.url)
+        elif endpoint.method == "POST":
+            skipped_post_endpoints += 1
+
+    return targets, skipped_post_forms, skipped_post_endpoints
 
 
 async def scan_website(
@@ -122,7 +131,11 @@ async def scan_website(
         max_pages=max_pages, max_depth=max_depth, headless=headless,
     )
     result = WebsiteScanResult(target=base_url, site_map=site_map)
-    targets, result.skipped_post_forms = _targets_from_map(site_map)
+    (
+        targets,
+        result.skipped_post_forms,
+        result.skipped_post_endpoints,
+    ) = _targets_from_map(site_map)
     remaining = max(0, budget - site_map.requests_used)
 
     for target in targets:
