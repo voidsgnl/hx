@@ -58,7 +58,12 @@ class WebsiteScanResult:
                     "payload": finding.payload,
                     "payload_id": finding.probe.payload_id,
                     "context": finding.context,
+                    "confidence": finding.confidence,
                     "hits": [asdict(hit) for hit in finding.probe.hits],
+                    "control_hits": (
+                        [asdict(hit) for hit in finding.control_probe.hits]
+                        if finding.control_probe else None
+                    ),
                 }
                 for result in self.scans
                 for finding in result.findings
@@ -82,7 +87,12 @@ class WebsiteScanResult:
                             "payload": item.payload,
                             "payload_id": item.probe.payload_id,
                             "context": item.context,
+                            "confidence": item.confidence,
                             "hits": [asdict(hit) for hit in item.probe.hits],
+                            "control_hits": (
+                                [asdict(hit) for hit in item.control_probe.hits]
+                                if item.control_probe else None
+                            ),
                         }
                         for item in result.findings
                     ],
