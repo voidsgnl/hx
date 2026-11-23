@@ -253,6 +253,7 @@ def discover_cmd(
     proxy: Optional[str] = typer.Option(None, help="Proxy URL"),
     json_out: bool = typer.Option(False, "--json", help="Emit JSON instead of a table"),
     headed: bool = typer.Option(False, "--headed", help="Show the Chromium browser window"),
+    storage_state: Optional[str] = typer.Option(None, "--storage-state", help="Playwright storage-state JSON"),
 ):
     """List forms and field metadata without submitting them."""
 
@@ -263,6 +264,7 @@ def discover_cmd(
         await client.start(
             oracle_init_script=ORACLE_INIT_JS,
             headless=not headed,
+            storage_state=storage_state,
         )
         try:
             if not await client.warm():
@@ -328,11 +330,13 @@ def map_cmd(
     proxy: Optional[str] = typer.Option(None, help="Proxy URL"),
     json_out: bool = typer.Option(False, "--json", help="Emit the complete site map as JSON"),
     headed: bool = typer.Option(False, "--headed", help="Show the Chromium browser window"),
+    storage_state: Optional[str] = typer.Option(None, "--storage-state", help="Playwright storage-state JSON"),
 ):
     """Map same-origin pages, forms, and browser-observed API endpoints without submitting forms."""
     result = asyncio.run(map_site(
         url, proxy=proxy, budget=budget, max_pages=max_pages,
         max_depth=max_depth, headless=not headed,
+        storage_state=storage_state,
     ))
     if json_out:
         typer.echo(json.dumps(result.to_dict(), indent=2))
