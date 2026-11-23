@@ -2,6 +2,7 @@ import pytest
 
 from hx.site_mapper import SiteMapResult, DiscoveredPage
 from hx.website_scan import _get_form_target, _targets_from_map, scan_website
+from hx.engines import AttackSurface, default_registry
 
 
 def test_get_form_target_uses_only_injectable_non_password_fields():
@@ -47,6 +48,27 @@ def test_target_planner_keeps_scope_and_skips_post_forms():
     assert skipped_endpoints == 0
 
 
+def test_engine_registry_selects_only_engines_that_support_a_surface():
+    registry = default_registry()
+    assert registry.engine_ids == ("xss",)
+    supported = AttackSurface(
+        url="https://example.test/search?q=x",
+        method="GET",
+        parameters=("q",),
+        behaviour="search",
+        source="page",
+    )
+    unsupported = AttackSurface(
+        url="https://example.test/",
+        method="GET",
+        parameters=(),
+        behaviour="general",
+        source="page",
+    )
+    assert [engine.engine_id for engine in registry.select(supported)] == ["xss"]
+    assert registry.select(unsupported) == []
+
+
 @pytest.mark.asyncio
 async def test_website_scan_maps_and_tests_get_form_inputs():
     result = await scan_website(
@@ -58,5 +80,6 @@ async def test_website_scan_maps_and_tests_get_form_inputs():
     assert result.site_map.pages
     assert result.tested_targets
     assert result.skipped_post_forms == 1
+    assert result.engines_run == ["xss"]
     assert result.requests_used <= 100
     assert any(finding.param == "q" for finding in result.findings)
