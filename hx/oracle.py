@@ -174,8 +174,9 @@ async def submit_form_from_page(
         await page.goto(form_page, wait_until="domcontentloaded", timeout=15000)
     except Exception:
         pass
-    await page.evaluate(
-        """({action, param, value}) => {
+    try:
+        await page.evaluate(
+            """({action, param, value}) => {
           const expected = new URL(action, location.href).href;
           const form = Array.from(document.forms).find(candidate =>
             new URL(candidate.action || location.href, location.href).href === expected
@@ -191,8 +192,10 @@ async def submit_form_from_page(
           field.dispatchEvent(new Event("change", {bubbles: true}));
           form.requestSubmit();
         }""",
-        {"action": action, "param": param, "value": value},
-    )
+            {"action": action, "param": param, "value": value},
+        )
+    except Exception:
+        pass
     try:
         await page.wait_for_load_state("domcontentloaded", timeout=10000)
     except Exception:
