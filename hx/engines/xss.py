@@ -2,18 +2,27 @@
 from __future__ import annotations
 
 from hx.engines.base import AttackSurface, EngineContext
-from hx.scanner import ScanResult, scan
+from hx.scanner import RequestSpec, ScanResult, scan
 
 
 class XSSEngine:
     engine_id = "xss"
 
     def supports(self, surface: AttackSurface) -> bool:
-        return surface.method.upper() == "GET" and bool(surface.parameters)
+        return surface.method.upper() in {"GET", "POST"} and bool(surface.parameters)
 
     async def run(self, surface: AttackSurface, context: EngineContext) -> ScanResult:
+        target = surface.url
+        if surface.method.upper() == "POST":
+            spec = RequestSpec(
+                method="POST",
+                url=surface.url,
+                form={name: "" for name in surface.parameters},
+                form_page=surface.form_page,
+            )
+            target = spec
         return await scan(
-            surface.url,
+            target,
             proxy=context.proxy,
             budget=context.budget,
             headless=context.headless,
