@@ -101,6 +101,10 @@ class SiteMapResult:
     requests_used: int = 0
     interactions_attempted: int = 0
     budget_exhausted: bool = False
+    pages_attempted: int = 0
+    pages_failed: list[str] = field(default_factory=list)
+    pages_pending: list[str] = field(default_factory=list)
+    framework_requests: int = 0
     errors: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:
@@ -199,6 +203,24 @@ def _page_key(url: str) -> str:
         parts.scheme.lower(), parts.netloc.lower(), parts.path or "/",
         urlencode([(key, "") for key in query_keys]), fragment,
     ))
+
+
+def _is_framework_navigation_request(url: str, headers: dict[str, str] | None = None) -> bool:
+    """Identify framework transport requests that are not application input APIs."""
+    parts = urlsplit(url)
+    query_names = {
+        name.lower() for name, _ in parse_qsl(parts.query, keep_blank_values=True)
+    }
+    normalized_headers = {
+        key.lower(): value.lower() for key, value in (headers or {}).items()
+    }
+    accept = normalized_headers.get("accept", "")
+    return (
+        "_rsc" in query_names
+        or parts.path.startswith(("/_next/", "/_nuxt/"))
+        or normalized_headers.get("rsc") == "1"
+        or "text/x-component" in accept
+    )
 
 
 def _behaviour_for(url: str, forms: list[dict]) -> str:
@@ -301,6 +323,7 @@ async def map_site(
             if key in pages_seen or not _is_in_scope(url, normalized_base):
                 continue
             pages_seen.add(key)
+            result.pages_attempted += 1
             if progress:
                 progress(f"[cyan]Mapping[/cyan] {url} (depth {depth}, {pacer.used}/{pacer.budget} discovery requests)")
             page_endpoints: list[DiscoveredEndpoint] = []
@@ -314,11 +337,20 @@ async def map_site(
                     return
                 if request.resource_type not in ("xhr", "fetch"):
                     return
-                endpoint_key = (request.method.upper(), request_url)
                 try:
                     all_headers = await request.all_headers()
                 except Exception:
                     all_headers = request.headers
+                if _is_framework_navigation_request(request_url, all_headers):
+                    result.framework_requests += 1
+                    if progress:
+                        progress(
+                            f"[dim]Framework navigation[/dim] "
+                            f"{request.method.upper()} {urlsplit(request_url).path} "
+                            f"(excluded from application API testing)"
+                        )
+                    return
+                endpoint_key = (request.method.upper(), request_url)
                 raw_headers = {
                     key.lower(): value for key, value in all_headers.items()
                     if key.lower() in {
@@ -427,12 +459,42 @@ async def map_site(
                     "() => Array.from(document.querySelectorAll('a[href]')).map(a => a.href)"
                 )
 
+                # Queue ordinary same-origin navigation before spending requests
+                # on optional UI exploration. Reserve an allowance for the
+                # remaining page visits, capped by max_pages.
+                links: list[str] = []
+                for raw_link in discovered_links or []:
+                    absolute = urljoin(url, raw_link)
+                    if not _is_in_scope(absolute, normalized_base):
+                        continue
+                    link_key = _page_key(absolute)
+                    if link_key not in pages_seen and link_key not in queued and depth < max_depth:
+                        queued.add(link_key)
+                        queue.append((absolute, depth + 1))
+                    links.append(absolute)
+
+                page_slots_left = max(0, max_pages - len(result.pages) - 1)
+                reserved_page_requests = min(
+                    pacer.remaining,
+                    min(len(queue), page_slots_left) * 18,
+                )
+                interaction_allowance = max(0, pacer.remaining - reserved_page_requests)
+                explore_interactions = (
+                    interaction_limit > 0 and interaction_allowance >= 8
+                )
+                if progress and interaction_limit and not explore_interactions:
+                    progress(
+                        f"[dim]UI exploration deferred[/dim] "
+                        f"{len(queue)} page(s) queued; preserving "
+                        f"{reserved_page_requests} discovery requests for page coverage"
+                    )
+
                 if progress:
                     progress(f"[dim]Page analysis[/dim] {title[:70]!r}: {len(forms)} forms, {len(discovered_links)} links, {len(page_endpoints)} API calls observed")
 
                 # Explore a bounded set of non-submit controls. Forms, ordinary
                 # links, and controls with state-changing labels are excluded.
-                if interaction_limit:
+                if explore_interactions:
                     interaction_path: list[dict] = []
                     seen_interactions: set[tuple[str, str, int]] = set()
                     # Re-scan the DOM after each action. This reveals controls
@@ -507,10 +569,18 @@ async def map_site(
                 ))
             except BudgetExhausted:
                 result.budget_exhausted = True
+                result.pages_pending.append(url)
                 if progress:
                     progress(f"[yellow]Discovery budget exhausted[/yellow] while processing {url}")
                 break
             except Exception as exc:
+                if client.budget_exhausted or pacer.exhausted:
+                    result.budget_exhausted = True
+                    result.pages_pending.append(url)
+                    if progress:
+                        progress(f"[yellow]Page deferred[/yellow] {url} — discovery budget exhausted during navigation")
+                    break
+                result.pages_failed.append(url)
                 result.errors.append(f"{url}: {type(exc).__name__}: {str(exc)[:180]}")
                 continue
             finally:
@@ -519,7 +589,8 @@ async def map_site(
                 except Exception:
                     pass
 
-            links: list[str] = []
+            # Include routes and links revealed by safe UI exploration. The
+            # initial anchors were already queued before interactions.
             for raw_link in discovered_links or []:
                 absolute = urljoin(url, raw_link)
                 if not _is_in_scope(absolute, normalized_base):
@@ -574,7 +645,16 @@ async def map_site(
         if owns_client:
             await client.close()
 
+    result.pages_pending = list(dict.fromkeys(
+        [*result.pages_pending, *(pending_url for pending_url, _ in queue)]
+    ))
     result.groups = sorted(group_data.values(), key=lambda group: group.name)
     if progress:
-        progress(f"[cyan]Discovery finished[/cyan]: {len(result.pages)} pages, {len(result.endpoints)} endpoints, {pacer.used}/{pacer.budget} requests")
+        progress(
+            f"[cyan]Discovery finished[/cyan]: {len(result.pages)} mapped, "
+            f"{result.pages_attempted} attempted, {len(result.pages_failed)} failed, "
+            f"{len(result.pages_pending)} pending; {len(result.endpoints)} application "
+            f"endpoints, {result.framework_requests} framework requests; "
+            f"{pacer.used}/{pacer.budget} requests"
+        )
     return result
