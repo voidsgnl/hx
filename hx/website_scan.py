@@ -1,9 +1,8 @@
 """Automated website scan orchestration.
 
-Discovery and vulnerability testing remain separate: the mapper is read-only,
-while this coordinator turns discovered, low-risk GET input surfaces into
-explicit requests for the existing XSS scanner. Additional vulnerability
-engines can be plugged into this orchestration without changing the crawler.
+Discovery and vulnerability testing remain separate. The coordinator maps
+input surfaces, selects independent engines, and combines their evidence
+without coupling vulnerability logic to the crawler.
 """
 from __future__ import annotations
 
@@ -52,6 +51,7 @@ class WebsiteScanResult:
             "budget_exhausted": self.budget_exhausted,
             "findings": [
                 {
+                    "engine": "xss",
                     "target": result.target,
                     "param": finding.param,
                     "url": finding.url,
@@ -62,6 +62,10 @@ class WebsiteScanResult:
                 }
                 for result in self.scans
                 for finding in result.findings
+            ] + [
+                {"engine": engine_result["engine"], **finding}
+                for engine_result in self.engine_results
+                for finding in engine_result.get("findings", [])
             ],
             "scans": [
                 {
