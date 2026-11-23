@@ -79,3 +79,17 @@ async def test_scanner_post_safe_no_finding():
     res = await scan(spec, budget=30)
     assert res.reached_app
     assert len(res.findings) == 0
+
+
+async def test_scanner_post_form_uses_live_csrf_token_and_browser_session():
+    spec = RequestSpec(
+        method="POST",
+        url=f"{BASE}/post-form-reflect",
+        form={"q": ""},
+        form_page=f"{BASE}/post-form-page",
+    )
+    res = await scan(spec, budget=60)
+    assert res.reached_app
+    assert len(res.findings) == 1
+    assert res.findings[0].param == "q"
+    assert res.findings[0].probe.proven
