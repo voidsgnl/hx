@@ -4,6 +4,7 @@ from urllib.parse import quote
 
 from hx.client import TargetClient
 from hx.oracle import probe, ORACLE_INIT_JS
+from hx.payloads import control_payload_for
 
 BASE = "http://localhost:5000"
 
@@ -77,3 +78,15 @@ async def test_cross_origin_navigation_still_proves(client):
     assert result.proven, (
         f"expected proof after cross-origin navigation, hits={result.hits}"
     )
+
+
+
+async def test_benign_control_callback_does_not_prove(client):
+    active = "<script>window.__hx_proof('hx-control')</script>"
+    control = control_payload_for(active)
+    assert control is not None
+    url = f"{BASE}/reflect?q={quote(control)}"
+    result = await probe(
+        client.page, url, control, payload_id="hx-control"
+    )
+    assert not result.proven
