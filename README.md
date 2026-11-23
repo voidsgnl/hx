@@ -39,6 +39,10 @@ vulnerability engines:
    records forms, and observes same-origin fetch/XHR endpoints. It prioritizes
    queued page navigation and reserves discovery requests for page coverage
    before optional UI exploration.
+   The first page navigation also performs the reachability check, avoiding a
+   duplicate homepage load. During mapping, images, fonts, and media are skipped
+   before they consume the request budget; documents, scripts, stylesheets, and
+   fetch/XHR traffic remain available so application behaviour can still load.
 2. **Request classification** — separates application endpoints from framework
    navigation traffic such as Next.js RSC (`?_rsc=`) requests. Framework
    navigation is counted for visibility but is not sent to vulnerability engines;
