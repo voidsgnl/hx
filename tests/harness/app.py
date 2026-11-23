@@ -188,7 +188,9 @@ def redirect_endpoint():
 
 @app.route("/internal-redirect")
 def internal_redirect_endpoint():
-    return redirect(request.args.get("next", "/"))
+    # This endpoint ignores the supplied destination and always redirects
+    # to a fixed same-origin path.
+    return redirect("/account")
 
 
 @app.route("/post-form-page")
