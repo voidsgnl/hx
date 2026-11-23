@@ -18,6 +18,8 @@ class AttackSurface:
     behaviour: str
     source: str
     form_page: str | None = None
+    request_body: dict | None = None
+    headers: dict[str, str] | None = None
 
 
 @dataclass(frozen=True)
