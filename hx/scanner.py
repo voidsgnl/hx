@@ -2,13 +2,14 @@
 from dataclasses import dataclass, field
 from urllib.parse import urlencode, urlparse, parse_qs, urlunparse
 import hashlib
+import copy
 import logging
 
 from hx.client import TargetClient
 from hx.oracle import (
     probe, probe_post_form, probe_post_json, probe_post_form_from_page,
     submit_form_from_page, ORACLE_INIT_JS,
-    ProbeResult, make_payload_id,
+    ProbeResult, make_payload_id, refresh_api_headers,
 )
 from hx.fastpath import FastPath, Candidate
 from hx.pacer import Pacer, BudgetExhausted
@@ -38,6 +39,7 @@ class RequestSpec:
     form_page: str | None = None
     headers: dict[str, str] | None = None
     parameters: tuple[str, ...] | None = None
+    source_page: str | None = None
 
 
 @dataclass
@@ -92,6 +94,34 @@ def _with_param(url: str, param: str, value: str) -> str:
     return urlunparse(parts._replace(query=urlencode(q, doseq=True)))
 
 
+def _json_pointer_parts(pointer: str) -> list[str]:
+    if not pointer.startswith("/"):
+        raise ValueError(f"invalid JSON pointer: {pointer}")
+    return [
+        part.replace("~1", "/").replace("~0", "~")
+        for part in pointer[1:].split("/")
+    ]
+
+
+def _set_json_pointer(document: dict, pointer: str, value):
+    """Replace an existing JSON scalar addressed by an RFC 6901 pointer."""
+    parts = _json_pointer_parts(pointer)
+    current = document
+    for part in parts[:-1]:
+        if isinstance(current, list):
+            current = current[int(part)]
+        else:
+            current = current[part]
+    final = parts[-1]
+    if isinstance(current, list):
+        current[int(final)] = value
+    else:
+        if final not in current:
+            raise KeyError(pointer)
+        current[final] = value
+    return document
+
+
 def _apply_marker(spec: RequestSpec, param: str, value: str) -> RequestSpec:
     if spec.method == "GET":
         return RequestSpec(method="GET", url=_with_param(spec.url, param, value))
@@ -102,9 +132,13 @@ def _apply_marker(spec: RequestSpec, param: str, value: str) -> RequestSpec:
             method="POST", url=spec.url, form=form, form_page=spec.form_page
         )
     if spec.method == "JSON":
-        body = dict(spec.json_body or {})
-        body[param] = value
-        return RequestSpec(method="JSON", url=spec.url, json_body=body, headers=spec.headers, parameters=spec.parameters)
+        body = copy.deepcopy(spec.json_body or {})
+        _set_json_pointer(body, param, value)
+        return RequestSpec(
+            method="JSON", url=spec.url, json_body=body,
+            headers=spec.headers, parameters=spec.parameters,
+            source_page=spec.source_page,
+        )
     raise ValueError(f"unknown method {spec.method}")
 
 
@@ -143,6 +177,7 @@ async def _run_probe(
         result = await probe_post_json(
             client.page, payload_spec.url, payload_spec.json_body or {},
             payload_id=payload_id, headers=payload_spec.headers,
+            source_page=payload_spec.source_page,
         )
     return result, payload_spec.url
 
@@ -211,6 +246,12 @@ async def scan(target: str | RequestSpec, *, proxy: str | None = None,
         candidates: list[tuple[str, Candidate, str, str]] = []
         for param in params:
             marker = _marker_for(param)
+            if spec.method == "JSON" and spec.source_page:
+                refreshed = await refresh_api_headers(
+                    client.page, spec.source_page, spec.url
+                )
+                if refreshed:
+                    spec.headers = {**(spec.headers or {}), **refreshed}
             probe_spec = _apply_marker(spec, param, marker)
             await pacer.pause()
             if probe_spec.method == "GET":
