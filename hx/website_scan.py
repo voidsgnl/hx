@@ -128,6 +128,8 @@ async def scan_website(
     change application state. Their testing will require an explicit active
     form-testing policy and suitable CSRF/session handling.
     """
+    if budget < 1:
+        raise ValueError("budget must be at least 1")
     # Reserve most of the request budget for actual vulnerability checks.
     # A large site must not consume the entire budget during discovery alone.
     mapping_budget = max(1, int(budget * 0.4))
