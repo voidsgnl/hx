@@ -205,17 +205,9 @@ def _page_key(url: str) -> str:
     ))
 
 
-def _mapping_request_allowed(
-    request_url: str,
-    resource_type: str,
-    base_url: str,
-) -> bool:
-    """Keep requests useful for DOM/API discovery; skip heavy passive assets."""
-    if not _is_in_scope(request_url, base_url):
-        return False
-    if resource_type.lower() in {"image", "font", "media"}:
-        return False
-    return True
+def _mapping_request_allowed(resource_type: str) -> bool:
+    """Skip passive media while retaining scripts, styles, documents and APIs."""
+    return resource_type.lower() not in {"image", "font", "media"}
 
 
 def _is_framework_navigation_request(
@@ -322,7 +314,7 @@ async def map_site(
                 headless=headless,
                 navigation_guard=lambda destination: _is_in_scope(destination, normalized_base),
                 request_filter=lambda request: _mapping_request_allowed(
-                    request.url, request.resource_type, normalized_base
+                    request.resource_type
                 ),
                 storage_state=storage_state,
             )
