@@ -3,7 +3,9 @@ import json
 import pytest
 
 from hx.site_mapper import SiteMapResult, DiscoveredPage
-from hx.website_scan import _get_form_target, _targets_from_map, scan_website
+from hx.website_scan import (
+    _get_form_target, _post_surfaces_from_map, _targets_from_map, scan_website,
+)
 from hx.engines import AttackSurface, default_registry
 import hx.website_scan as website_scan_module
 
@@ -49,6 +51,29 @@ def test_target_planner_keeps_scope_and_skips_post_forms():
     assert targets == ["https://example.test/search?q=hx"]
     assert skipped_forms == 1
     assert skipped_endpoints == 0
+
+
+def test_post_planner_excludes_authentication_forms_unless_explicitly_enabled():
+    site_map = SiteMapResult(target="https://example.test/")
+    site_map.pages.append(DiscoveredPage(
+        url="https://example.test/login",
+        depth=0,
+        title="login",
+        status=200,
+        behaviour="authentication",
+        forms=[{
+            "action": "https://example.test/login",
+            "method": "POST",
+            "fields": [
+                {"name": "username", "type": "text", "role": "injectable"},
+                {"name": "password", "type": "password", "role": "injectable"},
+            ],
+        }],
+    ))
+    assert _post_surfaces_from_map(site_map) == []
+    enabled = _post_surfaces_from_map(site_map, include_auth_forms=True)
+    assert len(enabled) == 1
+    assert enabled[0].parameters == ("username",)
 
 
 def test_engine_registry_selects_only_engines_that_support_a_surface():
