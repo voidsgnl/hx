@@ -48,6 +48,22 @@ def dom():
 </script>
 </body></html>"""
 
+
+@app.route("/hash-dom")
+def hash_dom():
+    return """<!doctype html><html><body>
+<div id="out"></div>
+<script>
+  function renderRoute() {
+    const query = location.hash.split("?", 2)[1] || "";
+    const params = new URLSearchParams(query);
+    document.getElementById("out").innerHTML = params.get("q") || "";
+  }
+  window.addEventListener("hashchange", renderRoute);
+  renderRoute();
+</script>
+</body></html>"""
+
 @app.route("/unrelated-alert")
 def unrelated_alert():
     # A page-level script execution must not be mistaken for probe execution.
