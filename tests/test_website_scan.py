@@ -314,7 +314,7 @@ def test_site_map_redacts_nested_api_secrets_recursively():
 
 
 @pytest.mark.asyncio
-async def test_active_api_replays_click_trigger_and_rotating_csrf_headers():
+async def test_active_api_replays_click_trigger_with_auth_and_csrf_headers():
     result = await website_scan_module.scan_website(
         "http://localhost:5000/interactive-api-page",
         budget=260,
