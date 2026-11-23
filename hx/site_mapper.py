@@ -330,17 +330,8 @@ async def map_site(
             client.request_guard = pacer.reserve
             client.budget_exhausted = False
         await client.page.add_init_script(_ROUTE_CAPTURE_JS)
-        preloaded_key = None
-        if _warm:
-            if progress:
-                progress(f"[dim]Connecting[/dim] Opening the first page {normalized_base}")
-            await pacer.pause()
-            if not await client.warm(url=normalized_base):
-                result.errors.append("Could not reach the application origin.")
-                if client.budget_exhausted or pacer.exhausted:
-                    result.budget_exhausted = True
-                return result
-            preloaded_key = _page_key(client.page.url)
+        if progress:
+            progress(f"[dim]Connecting[/dim] First page navigation will verify {origin}")
 
         while queue and len(result.pages) < max_pages:
             url, depth = queue.popleft()
@@ -442,17 +433,15 @@ async def map_site(
             client.page.on("request", record_request)
             status = None
             try:
-                if preloaded_key == key and _page_key(client.page.url) == key:
-                    # The reachability check already loaded the first target;
-                    # reuse it instead of downloading the homepage twice.
-                    status = client.last_response_status
-                    preloaded_key = None
-                else:
-                    await pacer.pause()
-                    response = await client.page.goto(
-                        url, wait_until="domcontentloaded", timeout=20000
-                    )
-                    status = response.status if response else None
+                await pacer.pause()
+                response = await client.page.goto(
+                    url, wait_until="domcontentloaded", timeout=20000
+                )
+                status = response.status if response else None
+                if _warm:
+                    # Wait out an interstitial challenge without a second
+                    # reachability navigation or losing request attribution.
+                    await client._wait_past_challenge()
                 final_url = client.page.url
                 if progress:
                     progress(f"[dim]HTTP response[/dim] {status if status is not None else 'no status'} — {final_url}")
