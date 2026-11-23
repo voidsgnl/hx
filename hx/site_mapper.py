@@ -471,7 +471,6 @@ async def map_site(
                     if link_key not in pages_seen and link_key not in queued and depth < max_depth:
                         queued.add(link_key)
                         queue.append((absolute, depth + 1))
-                    links.append(absolute)
 
                 page_slots_left = max(0, max_pages - len(result.pages) - 1)
                 reserved_page_requests = min(
