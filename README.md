@@ -1,45 +1,340 @@
-## Version pinning (WAF resistance)
+# hx
 
-`hx` relies on Playwright Chromium and curl-cffi sharing the same Chrome major
-version so browser-earned `cf_clearance` cookies remain valid in the fast path.
+**hx** is an execution-oracle XSS scanner. It looks for reflected input, selects
+payloads based on the reflection context, and uses a real Chromium browser to
+check whether a payload actually executes.
 
-The pinned pair is declared in `pyproject.toml` and
-`hx/versions.py`:
+A reflected string is only a candidate. **hx reports a proven XSS finding only
+when its browser oracle observes the proof marker belonging to the exact
+payload being tested.** A reflection by itself is not a vulnerability finding.
 
-- `playwright==1.62.0`
-- `curl_cffi==0.17.0`
-- Chromium 151 / `chrome151`
+> hx is an early-stage security testing tool (version 0.1.0). Use it only on
+> applications you own or have explicit permission to test.
 
-`curl_cffi==0.17.0` also ships a `chrome152` profile, but no published
-Playwright release currently bundles Chromium 152: Playwright 1.62.0 bundles
-151 and 1.63.0 bundles 153. The pinned pair therefore uses the exact available
-151 match rather than an unsupported or mismatched profile.
+## How it works
 
-Install the exact dependency graph from the committed lock:
+The scan pipeline has three main stages:
+
+1. **FastPath discovery** — sends a small marker through the supplied input and
+   checks whether the application reflects it. This uses `curl_cffi` for the
+   HTTP fast path.
+2. **Context analysis and payload selection** — inspects where the marker
+   appears (for example, HTML text or an attribute) and chooses payloads for
+   that context.
+3. **Browser execution oracle** — opens the candidate in Chromium and checks
+   for execution evidence associated with that payload's unique ID.
+
+The distinction matters:
+
+| Result | Meaning |
+| --- | --- |
+| Reflection | The application returned or rendered the marker. This is not proof of XSS. |
+| Proven finding | Chromium observed the expected proof event for the payload being tested. |
+
+For GET URLs, hx also checks query parameters embedded in client-side URL
+fragments (for example, `/#/search?q=test`). Fragments are inspected in the
+browser because browsers do not send them to the server in HTTP requests.
+
+## Features
+
+- GET query-parameter reflection discovery.
+- Form-encoded POST and JSON POST input testing.
+- Browser-side inspection of client-side fragment parameters.
+- Context-aware payload selection.
+- Chromium-based JavaScript execution verification.
+- Unique payload IDs to associate proof events with individual probes.
+- Per-scan outbound request budget and jittered pacing.
+- Optional proxy support.
+- Headless mode by default, with an optional visible browser.
+- Read-only HTML form discovery with text and JSON output.
+- JSON scan output for scripting and further analysis.
+
+## Requirements
+
+- Python 3.11 or newer.
+- A supported Linux, macOS, or Windows environment for Playwright.
+- Chromium installed through Playwright.
+- Network access to the target application.
+
+The project pins Playwright and curl-cffi together. Their browser and
+impersonation profiles are intended to use the same Chrome major version.
+Changing only one dependency can create a fingerprint mismatch and cause
+unexpected target responses.
+
+Current pinned pair:
+
+- `playwright==1.62.0` (bundled Chromium major 151)
+- `curl_cffi==0.17.0` (impersonation profile `chrome151`)
+
+## Installation
+
+Clone the repository and enter it:
 
 ```bash
+git clone https://github.com/voidsgnl/hx.git
+cd hx
+```
+
+Create and activate a virtual environment:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+```
+
+Install the exact dependency set recorded in the lock file, then install hx
+itself in editable mode:
+
+```bash
+python -m pip install --upgrade pip
 python -m pip install -r requirements.lock
 python -m pip install --no-deps -e .
 ```
 
-The lock includes the development dependencies used by tests. To intentionally
-refresh it, install pip-tools and run
-`pip-compile --extra=dev --resolver=backtracking --generate-hashes -o requirements.lock pyproject.toml`.
+Install the Playwright Chromium browser:
 
-Upgrade both dependencies together and run
-`pytest tests/test_fingerprint.py -v`. Never upgrade one without the other:
-fingerprint drift produces silent 403 responses on Cloudflare-style targets.
+```bash
+python -m playwright install chromium
+```
+
+On Linux, if Playwright reports missing operating-system libraries, install
+the browser dependencies as well:
+
+```bash
+python -m playwright install --with-deps chromium
+```
+
+Check the installation:
+
+```bash
+hx version
+hx --help
+hx scan --help
+hx discover --help
+```
+
+If you prefer pip to resolve the development dependencies rather than use the
+committed lock file, install with:
+
+```bash
+python -m pip install -e ".[dev]"
+python -m playwright install chromium
+```
+
+## Usage
+
+Only scan systems that you are authorized to assess. Start with a local test
+application or a deliberately vulnerable lab.
+
+### Scan a GET URL
+
+Provide a URL containing one or more query parameters:
+
+```bash
+hx scan "http://localhost:5000/reflect?q=test"
+```
+
+### Scan form-encoded POST data
+
+Provide the endpoint and the form fields to test:
+
+```bash
+hx scan "http://localhost:5000/reflect" --data "q=test"
+```
+
+### Scan a JSON POST body
+
+Provide a JSON object:
+
+```bash
+hx scan "http://localhost:5000/api/search" --json-body '{"q":"test"}'
+```
+
+`--data` and `--json-body` are mutually exclusive. If neither is supplied,
+hx scans the query parameters in the URL as a GET request.
+
+### Use a proxy
+
+Pass a proxy URL with `--proxy`:
+
+```bash
+hx scan "http://localhost:5000/reflect?q=test" \
+  --proxy "http://127.0.0.1:8080"
+```
+
+### Show the Chromium browser
+
+Scans are headless by default. Add `--headed` to display Chromium:
+
+```bash
+hx scan "http://localhost:5000/reflect?q=test" --headed
+```
+
+### Set a request budget
+
+The default budget is 120 outbound HTTP requests per scan. Use `--budget` to
+set a lower or higher limit:
+
+```bash
+hx scan "http://localhost:5000/reflect?q=test" --budget 30
+```
+
+The budget is a safety limit, not a target for how many requests a scan should
+make. When it is exhausted, hx stops the scan and reports that the budget was
+exhausted.
+
+### Emit JSON
+
+Use `--json` for machine-readable output:
+
+```bash
+hx scan "http://localhost:5000/reflect?q=test" --json
+```
+
+The scan JSON includes:
+
+- `target` and `reached_app`
+- `requests_used` and `budget_exhausted`
+- Browser/HTTP fingerprint comparison
+- `reflections` — reflected marker candidates
+- `findings` — browser-proven findings, including context, payload ID and
+  execution-hit evidence
+
+A scan can return reflections and still have an empty `findings` list. That
+means hx saw the input reflected but did not prove JavaScript execution.
 
 ## Read-only form discovery
 
-List forms and field metadata on a page without submitting any form:
+Use `discover` to inspect forms on a page:
 
 ```bash
-hx discover "http://localhost:5000/discovery"
-hx discover "http://localhost:5000/discovery" --json
+hx discover "http://localhost:5000/login"
 ```
 
-Text-like controls are labeled injectable; hidden fields and token-like names
-are labeled static; disabled controls, buttons, and file inputs are skipped.
-Field values are not included in output. This command only inspects the page;
-it does not submit forms or run payloads.
+JSON output:
+
+```bash
+hx discover "http://localhost:5000/login" --json
+```
+
+Visible browser:
+
+```bash
+hx discover "http://localhost:5000/login" --headed
+```
+
+Discovery reports form action, method, encoding type, and field names/types.
+Fields are classified as:
+
+- **injectable** — enabled, named, text-like input fields.
+- **static** — hidden fields and fields whose names look token-related.
+- **skip** — disabled or unnamed fields and controls such as submit, button,
+  reset, image, and file inputs.
+
+This operation is deliberately read-only: it does not submit forms, change
+account state, or run XSS payloads. It is a discovery aid, not automatic form
+scanning. To scan a form, construct an explicit GET, `--data`, or
+`--json-body` request yourself.
+
+## Understanding the output
+
+- **Could not reach application** — the browser warm-up did not reach the
+  application successfully. A challenge page, network problem, or other
+  access restriction may be responsible.
+- **Fingerprint warning** — the browser's Chrome major version and the
+  curl-cffi impersonation profile do not match. Treat results cautiously.
+- **Reflections found** — input markers were reflected. Reflection alone does
+  not demonstrate that the input is executable.
+- **No proven XSS** — no tested candidate produced the expected browser proof.
+  This does not prove the application is free of XSS.
+- **Proven XSS** — the browser oracle observed execution evidence associated
+  with the tested payload ID.
+
+The browser instrumentation is diagnostic and can be detected or interfered
+with by target-side JavaScript. The proof mechanism reduces accidental
+misattribution; it is not a cryptographic guarantee against a deliberately
+hostile page.
+
+## Development and tests
+
+Install the project with development dependencies:
+
+```bash
+python -m pip install -e ".[dev]"
+python -m playwright install chromium
+```
+
+Run the test suite:
+
+```bash
+python -m pytest -q
+```
+
+Run a focused test module:
+
+```bash
+python -m pytest tests/test_oracle.py -v
+```
+
+The tests include a local Flask harness for controlled reflection and
+execution cases. They are intended for development and regression testing,
+not for testing against third-party systems.
+
+GitHub Actions runs the test suite on pushes to `main` and pull requests.
+
+### Updating the browser fingerprint pair
+
+Do not upgrade Playwright or curl-cffi independently. Check the Chromium major
+version bundled by Playwright and the matching impersonation profiles
+available in curl-cffi, then update `pyproject.toml`, `hx/versions.py`, and
+the lock file together.
+
+Run the fingerprint regression test after an intentional update:
+
+```bash
+python -m pytest tests/test_fingerprint.py -v
+```
+
+The current pair is documented above because Playwright 1.62.0 bundles
+Chromium 151, while the available curl-cffi profile includes `chrome151`.
+Re-check this compatibility when either dependency is upgraded.
+
+## Current limitations
+
+hx is intentionally a focused scanner, not a general web crawler or
+comprehensive application security testing suite.
+
+- It scans the URL or request data supplied by the operator; it does not
+  crawl an entire site.
+- Form discovery is read-only and does not automatically turn discovered
+  forms into scan requests.
+- Reflection and context detection are heuristics. A reflection may be
+  harmless, and a real vulnerability may not be reflected in a way hx
+  currently recognizes.
+- The browser oracle can only prove executions reached by the payloads and
+  paths that hx tests. A clean result is not a guarantee that no XSS exists.
+- JavaScript-heavy applications, authentication flows, unusual content
+  policies, and application-specific request formats may need manual setup
+  or further testing.
+- Fingerprint matching is a compatibility check; it does not guarantee
+  Cloudflare clearance, WAF evasion, or access to a protected application.
+- The full proof pipeline has been exercised with the project's local test
+  harness. Real-application coverage remains limited; see
+  [VALIDATION.md](VALIDATION.md) for the recorded Juice Shop checks and
+  outstanding validation gaps.
+
+## Responsible use
+
+Only use hx against systems you own or have explicit permission to test.
+Scanning can generate requests, trigger security monitoring, or affect
+application behavior. Use a conservative request budget, coordinate testing
+with the system owner, and stop if the target becomes unstable or begins
+blocking requests.
+
+Do not use hx to access data, accounts, or systems without authorization.
+
+## License
+
+No license is currently declared in the project metadata. Check with the
+repository owner before redistributing or incorporating hx into another
+project.
