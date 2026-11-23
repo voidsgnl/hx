@@ -154,6 +154,7 @@ forms, behaviour groups, and browser-observed fetch/XHR endpoints:
 ```bash
 hx map "http://localhost:5000/" --max-pages 100 --max-depth 3
 hx map "http://localhost:5000/" --json
+hx map "https://app.example.com/" --storage-state .hx/session.json
 ```
 
 This operation does not inject payloads or submit forms.
@@ -325,6 +326,7 @@ JSON output:
 
 ```bash
 hx discover "http://localhost:5000/login" --json
+hx discover "https://app.example.com/profile" --storage-state .hx/session.json
 ```
 
 Visible browser:
