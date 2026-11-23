@@ -38,15 +38,18 @@ vulnerability engines:
 1. **Website mapper** — follows same-origin pages and JavaScript-driven routes,
    records forms, and observes same-origin fetch/XHR endpoints. It prioritizes
    queued page navigation and reserves discovery requests for page coverage
-   before optional UI exploration.
+   before optional UI exploration. It protects 70% of discovery capacity for
+   page navigation and allows up to 30% for bounded UI exploration, with a
+   per-page interaction slice so one page cannot consume the entire allowance.
    The first page navigation also performs the reachability check, avoiding a
    duplicate homepage load. During mapping, images, fonts, and media are skipped
    before they consume the request budget; documents, scripts, stylesheets, and
    fetch/XHR traffic remain available so application behaviour can still load.
 2. **Request classification** — separates application endpoints from framework
-   navigation traffic such as Next.js RSC (`?_rsc=`) requests. Framework
-   navigation is counted for visibility but is not sent to vulnerability engines;
-   application POST actions remain discoverable.
+   navigation traffic such as Next.js RSC/prefetch (`?_rsc=`) requests.
+   Redundant framework GET transports are aborted before they consume discovery
+   budget and are counted separately for visibility. Application API requests
+   and POST Server Actions remain available for discovery.
 3. **Behaviour analysis** — groups pages into surfaces such as authentication,
    search, user content, file handling, and general form workflows.
 3. **Engine registry** — selects independent vulnerability engines for each
