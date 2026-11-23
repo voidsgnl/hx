@@ -99,23 +99,44 @@ def scan_cmd(
             for group in result.site_map.groups:
                 group_table.add_row(group.name, str(len(group.pages)))
             console.print(group_table)
-        if not result.findings:
+        redirect_findings = [
+            finding
+            for engine_result in result.engine_results
+            if engine_result.get("engine") == "open_redirect"
+            for finding in engine_result.get("findings", [])
+        ]
+        if not result.findings and not redirect_findings:
             if not result.tested_targets:
-                console.print("[yellow]no testable GET input surfaces were discovered[/yellow]")
+                console.print("[yellow]no testable input surfaces were discovered[/yellow]")
             else:
-                console.print("[yellow]no proven XSS on the tested inputs[/yellow]")
+                console.print("[yellow]no proven vulnerabilities on the tested inputs[/yellow]")
             return
-        table = Table(title="Website scan — proven XSS", show_lines=True)
-        table.add_column("param")
-        table.add_column("context")
-        table.add_column("payload_id")
-        table.add_column("URL")
-        for finding in result.findings:
-            table.add_row(
-                finding.param, finding.context, finding.probe.payload_id,
-                finding.url,
-            )
-        console.print(table)
+        if result.findings:
+            table = Table(title="Website scan — proven XSS", show_lines=True)
+            table.add_column("param")
+            table.add_column("context")
+            table.add_column("payload_id")
+            table.add_column("URL")
+            for finding in result.findings:
+                table.add_row(
+                    finding.param, finding.context, finding.probe.payload_id,
+                    finding.url,
+                )
+            console.print(table)
+        if redirect_findings:
+            redirects = Table(title="Website scan — verified open redirects", show_lines=True)
+            redirects.add_column("parameter")
+            redirects.add_column("HTTP")
+            redirects.add_column("destination")
+            redirects.add_column("evidence")
+            for finding in redirect_findings:
+                redirects.add_row(
+                    finding["parameter"],
+                    str(finding["status"]),
+                    finding["destination"],
+                    finding["evidence"],
+                )
+            console.print(redirects)
         return
 
     if json_body:
