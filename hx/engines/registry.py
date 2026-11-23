@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from hx.engines.base import AttackSurface, VulnerabilityEngine
 from hx.engines.xss import XSSEngine
+from hx.engines.open_redirect import OpenRedirectEngine
 
 
 class EngineRegistry:
@@ -29,4 +30,5 @@ def default_registry() -> EngineRegistry:
     """Return the engines currently implemented by hx."""
     registry = EngineRegistry()
     registry.register(XSSEngine())
+    registry.register(OpenRedirectEngine())
     return registry
