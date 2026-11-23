@@ -59,6 +59,8 @@ def scan_cmd(
             "target" if data or json_body or parsed_target.query or has_fragment_input
             else "website"
         )
+    if active_post and selected_mode != "website":
+        raise typer.BadParameter("--active-post is only available in website mode")
     if selected_mode == "website":
         if data or json_body:
             raise typer.BadParameter("--data and --json-body are only valid in target mode")
@@ -101,7 +103,7 @@ def scan_cmd(
             if not result.tested_targets:
                 console.print("[yellow]no testable GET input surfaces were discovered[/yellow]")
             else:
-                console.print("[yellow]no proven XSS on the tested GET inputs[/yellow]")
+                console.print("[yellow]no proven XSS on the tested inputs[/yellow]")
             return
         table = Table(title="Website scan — proven XSS", show_lines=True)
         table.add_column("param")
