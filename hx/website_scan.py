@@ -316,6 +316,7 @@ async def scan_website(
     include_auth_forms: bool = False,
     storage_state: str | None = None,
     interaction_limit: int = 3,
+    progress=None,
 ) -> WebsiteScanResult:
     """Map a site and run selected engines against discovered input surfaces.
 
@@ -352,6 +353,7 @@ async def scan_website(
             _client=client,
             _pacer=mapping_pacer,
             interaction_limit=interaction_limit,
+            progress=progress,
         )
         result = WebsiteScanResult(
             target=base_url,
@@ -392,8 +394,12 @@ async def scan_website(
             client.budget_exhausted = False
 
         registry = default_registry()
-        for surface in surfaces:
+        if progress:
+            progress(f"[bold cyan]Testing[/bold cyan] {len(surfaces)} selected input surfaces; {remaining} requests available")
+        for index, surface in enumerate(surfaces, start=1):
             target = surface.url
+            if progress:
+                progress(f"[yellow]Target {index}/{len(surfaces)}[/yellow] {surface.method} {target}")
             if remaining <= 0 or test_pacer is None:
                 result.budget_exhausted = True
                 break
@@ -422,6 +428,8 @@ async def scan_website(
                         **engine_result.to_dict(),
                     })
                 result.tested_targets.append(target)
+                if progress:
+                    progress(f"[green]Finished[/green] {engine.engine_id} on {target} ({engine_result.requests_used} requests; {test_pacer.remaining} testing requests remain)")
                 remaining = max(0, remaining - engine_result.requests_used)
                 if engine_result.budget_exhausted:
                     result.budget_exhausted = True
