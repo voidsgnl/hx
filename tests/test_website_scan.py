@@ -78,7 +78,7 @@ def test_post_planner_excludes_authentication_forms_unless_explicitly_enabled():
 
 def test_engine_registry_selects_only_engines_that_support_a_surface():
     registry = default_registry()
-    assert registry.engine_ids == ("xss",)
+    assert registry.engine_ids == ("open_redirect", "xss")
     supported = AttackSurface(
         url="https://example.test/search?q=x",
         method="GET",
@@ -95,6 +95,16 @@ def test_engine_registry_selects_only_engines_that_support_a_surface():
     )
     assert [engine.engine_id for engine in registry.select(supported)] == ["xss"]
     assert registry.select(unsupported) == []
+    redirect_surface = AttackSurface(
+        url="https://example.test/continue?next=%2F",
+        method="GET",
+        parameters=("next",),
+        behaviour="general",
+        source="page",
+    )
+    assert {engine.engine_id for engine in registry.select(redirect_surface)} == {
+        "open_redirect", "xss"
+    }
 
 
 @pytest.mark.asyncio
