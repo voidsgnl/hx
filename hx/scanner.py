@@ -1,5 +1,5 @@
 """Orchestration: reflection discovery -> browser-confirmed execution."""
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from urllib.parse import urlencode, urlparse, parse_qs, urlunparse
 import hashlib
 import copy
@@ -31,6 +31,24 @@ class Finding:
 
 
 @dataclass
+class Coverage:
+    params_discovered: int = 0
+    params_tested: int = 0
+    params_skipped: int = 0
+    skip_reasons: dict[str, int] = field(default_factory=dict)
+    reflections: int = 0
+    contexts: dict[str, int] = field(default_factory=dict)
+    findings_proven: int = 0
+    findings_uncontrolled: int = 0
+    blocked: int = 0
+    blocked_detail: list[str] = field(default_factory=list)
+    budget_used: int = 0
+    budget_limit: int = 0
+    budget_exhausted: bool = False
+    requests_unaccounted: int = 0
+
+
+@dataclass
 class RequestSpec:
     method: str = "GET"
     url: str = ""
@@ -52,6 +70,31 @@ class ScanResult:
     budget_exhausted: bool = False
     requests_used: int = 0
     fingerprint: dict = field(default_factory=dict)
+    coverage: Coverage = field(default_factory=Coverage)
+
+    def to_dict(self) -> dict:
+        return {
+            "target": self.target,
+            "reached_app": self.reached_app,
+            "requests_used": self.requests_used,
+            "budget_exhausted": self.budget_exhausted,
+            "fingerprint": self.fingerprint,
+            "coverage": asdict(self.coverage),
+            "reflections": [asdict(item) for item in self.reflections],
+            "findings": [
+                {
+                    "param": item.param,
+                    "url": item.url,
+                    "payload": item.payload,
+                    "payload_id": item.probe.payload_id,
+                    "context": item.context,
+                    "confidence": item.confidence,
+                    "engine": getattr(item, "engine", "xss"),
+                    "hits": [asdict(hit) for hit in item.probe.hits],
+                }
+                for item in self.findings
+            ],
+        }
 
 
 def _marker_for(param: str) -> str:
@@ -207,10 +250,19 @@ async def scan(target: str | RequestSpec, *, proxy: str | None = None,
         raise ValueError(f"unknown method {spec.method}")
 
     result = ScanResult(target=spec.url, reached_app=False)
+    result.coverage.params_discovered = len(params) + len(fragment_params)
     pacer = _pacer or Pacer(budget=budget)
     owns_client = _client is None
     client = _client or TargetClient(origin, proxy=proxy)
     request_start = pacer.used
+    def record_blocked(status: int, method: str, url: str) -> None:
+        if status not in (403, 429) and status < 500:
+            return
+        path = urlparse(url).path or "/"
+        detail = f"{method} {path} -> {status}"
+        if detail not in result.coverage.blocked_detail:
+            result.coverage.blocked_detail.append(detail)
+            result.coverage.blocked += 1
     if owns_client:
         await client.start(
             oracle_init_script=ORACLE_INIT_JS,
@@ -299,6 +351,12 @@ async def scan(target: str | RequestSpec, *, proxy: str | None = None,
                     probe_spec.url, probe_spec.json_body or {}, cookies,
                     headers=probe_spec.headers,
                 ) if c else ""
+            if fp.last_status is not None:
+                record_blocked(
+                    fp.last_status,
+                    probe_spec.method,
+                    probe_spec.url,
+                )
             if c:
                 c.param = param
                 result.reflections.append(c)
@@ -306,6 +364,7 @@ async def scan(target: str | RequestSpec, *, proxy: str | None = None,
                     param, c, body,
                     "browser-post-form" if probe_spec.method == "POST" and spec.form_page else "http",
                 ))
+            result.coverage.params_tested += 1
 
         # Fragment values are browser-only: browsers do not send fragments over HTTP.
         for param in fragment_params:
@@ -327,10 +386,15 @@ async def scan(target: str | RequestSpec, *, proxy: str | None = None,
                 )
                 result.reflections.append(c)
                 candidates.append((param, c, body, "fragment"))
+            result.coverage.params_tested += 1
 
         # Prove only candidates that actually reflected in the relevant context.
         for param, cand, body, source in candidates:
             det = detect_context(body, cand.offset)
+            result.coverage.reflections += 1
+            result.coverage.contexts[det.context.value] = (
+                result.coverage.contexts.get(det.context.value, 0) + 1
+            )
             payload_templates = payloads_for(det.context)
             for payload_index in range(len(payload_templates)):
                 payload_id = make_payload_id()
@@ -359,6 +423,7 @@ async def scan(target: str | RequestSpec, *, proxy: str | None = None,
                         probe=pr, context=det.context.value,
                         confidence="executed_without_control",
                     ))
+                    result.coverage.findings_uncontrolled += 1
                     break
 
                 await pacer.pause()
@@ -371,6 +436,7 @@ async def scan(target: str | RequestSpec, *, proxy: str | None = None,
                         probe=pr, context=det.context.value,
                         confidence="executed_without_control",
                     ))
+                    result.coverage.findings_uncontrolled += 1
                     raise BudgetExhausted(
                         "request budget exhausted during differential control"
                     )
@@ -381,6 +447,7 @@ async def scan(target: str | RequestSpec, *, proxy: str | None = None,
                         confidence="proven_execution",
                         control_probe=control_pr,
                     ))
+                    result.coverage.findings_proven += 1
                     break
 
         result.requests_used = pacer.used - request_start
@@ -394,5 +461,24 @@ async def scan(target: str | RequestSpec, *, proxy: str | None = None,
         result.budget_exhausted = (
             result.budget_exhausted or pacer.exhausted or client.budget_exhausted
         )
+        result.coverage.budget_used = pacer.used - request_start
+        result.coverage.budget_limit = pacer.budget
+        result.coverage.budget_exhausted = result.budget_exhausted
+        result.coverage.requests_unaccounted = 0
+        accounted = (
+            result.coverage.params_tested
+            + result.coverage.params_skipped
+        )
+        missing = result.coverage.params_discovered - accounted
+        if missing > 0:
+            result.coverage.params_skipped += missing
+            reason = "budget" if result.budget_exhausted else "static"
+            result.coverage.skip_reasons[reason] = (
+                result.coverage.skip_reasons.get(reason, 0) + missing
+            )
+        elif missing < 0:
+            result.coverage.params_skipped = max(
+                0, result.coverage.params_skipped
+            )
         if owns_client:
             await client.close()

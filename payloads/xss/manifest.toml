@@ -1,0 +1,30 @@
+name = "xss"
+description = "Reflected/DOM XSS payloads, context-keyed"
+max_attempts_per_context = 8
+
+[contexts.html_body]
+required = true
+
+[contexts.attr_double]
+required = true
+
+[contexts.attr_single]
+required = true
+
+[contexts.attr_unquoted]
+required = true
+
+[contexts.js_string_double]
+required = true
+
+[contexts.js_string_single]
+required = true
+
+[contexts.script_block]
+required = true
+
+[contexts.url_attr]
+required = true
+
+[contexts.unknown]
+required = false

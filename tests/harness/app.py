@@ -318,6 +318,10 @@ def post_csrf_check():
         return "csrf failed", 403
     return "<html><body>ok</body></html>"
 
+@app.route("/forbidden")
+def forbidden():
+    return "<html><body>blocked</body></html>", 403
+
 @app.route("/interactive-api-page")
 def interactive_api_page():
     session["hx_csrf"] = "hx-interactive-csrf"

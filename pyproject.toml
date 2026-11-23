@@ -27,4 +27,8 @@ testpaths = ["tests"]
 pythonpath = ["."]
 
 [tool.setuptools.packages.find]
-include = ["hx*"]
+include = ["hx*", "payloads*"]
+
+[tool.setuptools.package-data]
+payloads = ["**/*.toml", "**/*.txt"]
+"hx.banners" = ["*.txt"]

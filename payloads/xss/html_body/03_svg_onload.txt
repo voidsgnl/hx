@@ -1,0 +1,1 @@
+<svg onload=window.__hx_proof('{M}')>

@@ -1,7 +1,9 @@
 """hx — execution-oracle XSS scanner with browser WAF pass."""
 import asyncio
 import json
+import random
 from dataclasses import asdict
+from importlib.resources import files
 from typing import Optional
 
 import typer
@@ -20,13 +22,32 @@ app = typer.Typer(add_completion=False, help="Website vulnerability scanner with
 console = Console()
 
 
+def _random_banner() -> str:
+    banners = tuple(
+        banner.read_text(encoding="utf-8").strip()
+        for banner in files("hx.banners").iterdir()
+        if banner.name.endswith(".txt")
+    )
+    if not banners:
+        raise RuntimeError("No hx banners are installed")
+    return random.choice(banners)
+
+
+@app.callback(invoke_without_command=True)
+def main(ctx: typer.Context):
+    """Browser-verified website vulnerability scanner."""
+    if ctx.invoked_subcommand is None and not ctx.args:
+        console.print(_random_banner(), style="bold cyan", markup=False)
+        typer.echo(ctx.get_help())
+
+
 @app.command()
 def version():
     """Print version."""
     console.print(f"hx {__version__}")
 
 
-@app.command()
+@app.command(name="scan")
 def scan_cmd(
     url: str = typer.Argument(..., help="Target URL, e.g. http://localhost:5000/reflect?q=test"),
     data: Optional[str] = typer.Option(None, "--data", help="form-encoded POST body, e.g. 'q=test'"),
@@ -171,6 +192,7 @@ def scan_cmd(
             "requests_used": res.requests_used,
             "budget_exhausted": res.budget_exhausted,
             "fingerprint": res.fingerprint,
+            "coverage": asdict(res.coverage),
             "reflections": [asdict(c) for c in res.reflections],
             "findings": [
                 {"param": f.param, "url": f.url, "payload": f.payload,
@@ -199,6 +221,24 @@ def scan_cmd(
     console.print(f"[dim]requests used: {res.requests_used}"
                   f"{' (BUDGET EXHAUSTED)' if res.budget_exhausted else ''}[/dim]")
     console.print(f"[dim]reflections found: {len(res.reflections)}[/dim]")
+    coverage = res.coverage
+    skip_text = (
+        ", ".join(
+            f"{reason}={count}"
+            for reason, count in sorted(coverage.skip_reasons.items())
+        )
+        or "none"
+    )
+    finding_count = (
+        coverage.findings_proven + coverage.findings_uncontrolled
+    )
+    console.print(
+        f"[dim]coverage: {coverage.params_tested} tested, "
+        f"{coverage.params_skipped} skipped ({skip_text}), "
+        f"{coverage.reflections} reflections, {finding_count} finding(s), "
+        f"{coverage.budget_used}/{coverage.budget_limit} requests"
+        f"{', blocked' if coverage.blocked else ', not blocked'}[/dim]"
+    )
 
     if not res.findings:
         console.print("[yellow]no proven XSS[/yellow]")
@@ -217,9 +257,6 @@ def scan_cmd(
             kinds or "?", evid,
         )
     console.print(table)
-
-
-app.command(name="scan")(scan_cmd)
 
 
 @app.command(name="session")

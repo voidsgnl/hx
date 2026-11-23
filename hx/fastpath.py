@@ -31,6 +31,7 @@ class FastPath:
         self.request_guard = request_guard
         self.proxies = {"https": proxy, "http": proxy} if proxy else None
         self._allowed_domains: set[str] = set()
+        self.last_status: int | None = None
 
     def _reserve_request(self) -> None:
         if self.request_guard:
@@ -47,6 +48,7 @@ class FastPath:
             response = cffi.request(
                 method, url, allow_redirects=False, **request_kwargs
             )
+            self.last_status = response.status_code
             location = response.headers.get("Location")
             if response.status_code not in (301, 302, 303, 307, 308) or not location:
                 return response
