@@ -21,6 +21,7 @@ class DiscoveredEndpoint:
     method: str
     resource_type: str
     source_page: str
+    query_parameters: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -55,6 +56,31 @@ class SiteMapResult:
 
     def to_dict(self) -> dict:
         return asdict(self)
+
+_ROUTE_CAPTURE_JS = """
+(() => {
+  if (window.__hx_routes) return;
+  const routes = [];
+  Object.defineProperty(window, "__hx_routes", {
+    configurable: false,
+    get: () => routes,
+  });
+  const record = () => {
+    const current = location.href;
+    if (!routes.includes(current)) routes.push(current);
+  };
+  for (const method of ["pushState", "replaceState"]) {
+    const original = history[method].bind(history);
+    history[method] = (...args) => {
+      const result = original(...args);
+      record();
+      return result;
+    };
+  }
+  addEventListener("hashchange", record);
+  addEventListener("popstate", record);
+})();
+"""
 
 
 def _origin(url: str) -> tuple[str, str, int | None]:
@@ -164,6 +190,7 @@ async def map_site(
             headless=headless,
             navigation_guard=lambda destination: _is_in_scope(destination, normalized_base),
         )
+        await client.page.add_init_script(_ROUTE_CAPTURE_JS)
         await pacer.pause()
         if not await client.warm():
             result.errors.append("Could not reach the application origin.")
@@ -192,6 +219,11 @@ async def map_site(
                     method=request.method.upper(),
                     resource_type=request.resource_type,
                     source_page=source,
+                    query_parameters=sorted({
+                        name for name, _ in parse_qsl(
+                            urlsplit(request_url).query, keep_blank_values=True
+                        )
+                    }),
                 )
                 result.endpoints.append(endpoint)
                 page_endpoints.append(endpoint)
@@ -225,6 +257,10 @@ async def map_site(
                 discovered_links = await client.page.evaluate(
                     "() => Array.from(document.querySelectorAll('a[href]')).map(a => a.href)"
                 )
+                observed_routes = await client.page.evaluate(
+                    "() => window.__hx_routes || []"
+                )
+                discovered_links.extend(observed_routes or [])
             except BudgetExhausted:
                 result.budget_exhausted = True
                 break
