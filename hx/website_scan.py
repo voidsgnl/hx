@@ -342,7 +342,7 @@ async def scan_website(
         headless=headless,
         navigation_guard=lambda destination: _is_in_scope(destination, base_url),
         request_filter=lambda request: _mapping_request_allowed(
-            request.url, request.resource_type, base_url
+            request.resource_type
         ),
         storage_state=storage_state,
     )
