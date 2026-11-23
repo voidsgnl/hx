@@ -56,3 +56,24 @@ async def test_maps_forms_and_groups_pages_without_submitting_them():
     }
     assert result.groups
     assert result.requests_used > 0
+
+
+@pytest.mark.asyncio
+async def test_maps_javascript_routes_and_fetch_api_endpoints():
+    result = await map_site(
+        "http://localhost:5000/spa",
+        budget=50,
+        max_pages=5,
+        max_depth=1,
+    )
+    route = next(
+        page for page in result.pages
+        if urlsplit(page.url).path == "/search"
+    )
+    assert route.query_parameters == ["q"]
+    endpoint = next(
+        item for item in result.endpoints
+        if urlsplit(item.url).path == "/api/search"
+    )
+    assert endpoint.method == "GET"
+    assert endpoint.query_parameters == ["q"]
