@@ -156,47 +156,40 @@ python -m playwright install chromium
 Only scan systems that you are authorized to assess. Start with a local test
 application or a deliberately vulnerable lab.
 
-### Map a website without active testing
-
-Use `map` when you only want to inventory the site's same-origin pages,
-forms, behaviour groups, and browser-observed fetch/XHR endpoints:
-
-```bash
-hx map "http://localhost:5000/" --max-pages 100 --max-depth 3
-hx map "http://localhost:5000/" --json
-hx map "https://app.example.com/" --storage-state .hx/session.json
-```
-
-This operation does not inject payloads or submit forms.
-
 ### Automatically scan a website
 
-When the URL has no query input and no POST body, `hx scan` selects website
-mode automatically:
+When the URL has no query input and no POST body, `hx scan` selects
+website mode automatically:
 
 ```bash
 hx scan "http://localhost:5000/"
 ```
 
-Website mode maps same-origin pages, groups them by observable behaviour, then
-runs the applicable registered engines against discovered GET inputs. The
-current engines check XSS and recognized open-redirect parameters. Control
-discovery size with:
+Mapping is an internal phase of this command, not a separate CLI operation.
+hx automatically maps same-origin pages, forms, browser-observed fetch/XHR
+requests, and behaviour groups. It then selects relevant attack surfaces and
+runs the registered vulnerability engines. You do not need to run a map
+command or manually pass a map into the scanner.
+
+Control discovery and testing with:
 
 ```bash
 hx scan "http://localhost:5000/" --max-pages 50 --max-depth 3 --budget 300
 ```
 
-Choose the mode explicitly when needed:
+Choose the scan mode explicitly only when the automatic choice is not what
+you need:
 
 ```bash
 hx scan "http://localhost:5000/" --mode website
 hx scan "http://localhost:5000/reflect" --mode target
 ```
 
-The explicit target mode preserves direct testing of paths without query
-strings. POST forms are discovered but remain passive unless you explicitly
-enable active POST testing.
+A URL containing query parameters or a fragment query is treated as an
+explicit target by default. A base URL without input parameters starts the
+automatic website workflow. POST forms and API endpoints are discovered during
+mapping; active submission/replay remains separately opt-in because it can
+change application state.
 
 ### Authenticated POST form testing
 
@@ -229,10 +222,41 @@ and file-upload forms are not actively submitted.
 
 **Important:** active POST testing submits real application forms and can
 change server-side state. Use it only on systems and accounts you are
-authorized to test, preferably in a staging environment. It currently covers
-HTML POST forms, not browser-observed POST API endpoints. Applications that
-depend on sessionStorage or custom JavaScript-only CSRF headers may need
-additional session/request integration.
+authorized to test, preferably in a staging environment.
+
+### Authenticated JSON POST API testing
+
+The automatic mapper observes same-origin fetch/XHR requests, including JSON
+request bodies and the request headers the application actually uses. Enable
+active API replay separately because POST APIs can mutate server-side state:
+
+```bash
+hx scan "https://app.example.com/" \
+  --storage-state .hx/session.json \
+  --active-api \
+  --budget 500
+```
+
+hx tests scalar fields at any depth in JSON objects and arrays. It represents
+nested fields as JSON Pointer paths (for example, `/profile/bio` or
+`/items/0/label`) and changes only the selected value while preserving its
+siblings and surrounding structure. Fields whose names indicate passwords,
+tokens, secrets, credentials, CSRF values, session identifiers, or signatures
+are excluded from injection.
+
+Before API discovery and each browser verification probe, hx reloads the
+source page and observes the application's own request to refresh rotating
+Authorization and custom X-* headers, including CSRF headers. Browser-managed
+cookies are refreshed with the session. This works when the source page
+reissues the API request during its normal load; applications that generate
+tokens only after a user interaction or through a separate workflow may still
+need additional workflow support.
+
+Captured Authorization, cookie, token, secret, and credential values are
+redacted recursively in exported site-map/report data. They remain in memory
+for the authorized scan. Unsupported content types and bodies that cannot be
+parsed as JSON are mapped but not actively tested. Multipart, binary, and
+GraphQL-variable body support is not implemented yet.
 
 ### Current vulnerability engines
 
@@ -427,10 +451,12 @@ Re-check this compatibility when either dependency is upgraded.
 hx is intentionally a focused scanner, not a general web crawler or
 comprehensive application security testing suite.
 
-- Website mode tests discovered GET inputs with the XSS and
-  open-redirect engines. Active POST testing currently covers HTML forms only;
-  POST API endpoints and other vulnerability classes are not actively tested.
-- The separate `discover` command is read-only and never submits forms.
+- Website mode automatically maps pages and browser-observed API traffic.
+  XSS testing covers discovered GET inputs, opt-in HTML POST forms, and opt-in
+  JSON POST APIs with nested scalar fields. Open redirect checks cover
+  recognized GET parameters.
+- The separate `discover` command is a read-only form-inspection utility;
+  website mapping itself is automatic inside `hx scan`.
 - Reflection and context detection are heuristics. A reflection may be
   harmless, and a real vulnerability may not be reflected in a way hx
   currently recognizes.
@@ -461,19 +487,3 @@ Do not use hx to access data, accounts, or systems without authorization.
 No license is currently declared in the project metadata. Check with the
 repository owner before redistributing or incorporating hx into another
 project.
-
-
-### Authenticated JSON POST API testing
-
-The mapper records same-origin fetch/XHR requests, including JSON request bodies and application headers. API replay is separate from HTML form submission because POST APIs can mutate server state.
-
-```bash
-hx scan "https://app.example.com/" \
-  --storage-state .hx/session.json \
-  --active-api \
-  --budget 500
-```
-
-`--active-api` currently tests same-origin JSON POST endpoints with at least one non-secret scalar body field. It reuses captured Authorization and custom X-* headers (including CSRF headers) plus live browser cookies. Password, token, secret, credential, and CSRF body fields are retained as request context but are not selected as injection parameters. Unsupported content types and bodies that cannot be parsed as JSON are mapped but not actively tested.
-
-Captured Authorization, cookie, token, secret, and credential values are redacted from JSON map/report output. They remain available in memory for request replay. This initial API implementation does not replay multipart, binary, GraphQL-variable, nested JSON, or other non-JSON bodies, and does not invent fields the browser did not send. Enable active API testing only on systems and accounts you are authorized to test, preferably in staging.
