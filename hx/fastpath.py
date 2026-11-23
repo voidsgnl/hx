@@ -176,10 +176,12 @@ class FastPath:
 
     def find_reflection_post_json(self, url: str, body: dict,
                                   marker: str,
-                                  browser_cookies: list[dict]) -> Candidate | None:
+                                  browser_cookies: list[dict],
+                                  headers: dict[str, str] | None = None) -> Candidate | None:
         r = self._request("POST",
             url,
             json=body,
+            headers=headers,
             impersonate=self.impersonate,
             browser_cookies=browser_cookies,
             proxies=self.proxies,
@@ -205,10 +207,12 @@ class FastPath:
         return r.text or ""
 
     def fetch_body_post_json(self, url: str, body: dict,
-                             browser_cookies: list[dict]) -> str:
+                             browser_cookies: list[dict],
+                             headers: dict[str, str] | None = None) -> str:
         r = self._request("POST",
             url,
             json=body,
+            headers=headers,
             impersonate=self.impersonate,
             browser_cookies=browser_cookies,
             proxies=self.proxies,
