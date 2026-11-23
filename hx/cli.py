@@ -72,7 +72,8 @@ def scan_cmd(
             f"{' (BUDGET EXHAUSTED)' if result.budget_exhausted else ''}[/dim]"
         )
         console.print(
-            f"[dim]POST forms mapped but not submitted: {result.skipped_post_forms}[/dim]"
+            f"[dim]POST forms mapped but not submitted: {result.skipped_post_forms} | "
+            f"POST API endpoints mapped but not tested: {result.skipped_post_endpoints}[/dim]"
         )
         if result.site_map.groups:
             group_table = Table(title="Discovered behaviour groups")
