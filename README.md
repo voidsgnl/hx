@@ -22,7 +22,9 @@ The scan pipeline has three main stages:
    appears (for example, HTML text or an attribute) and chooses payloads for
    that context.
 3. **Browser execution oracle** — opens the candidate in Chromium and checks
-   for execution evidence associated with that payload's unique ID.
+   for execution evidence associated with that payload's unique ID. Every hit
+   records the document origin, and proof is accepted only when execution
+   occurs in the origin explicitly targeted by that probe.
 4. **Differential control** — when an active payload executes, hx repeats the
    same injection shape with only the proof callback replaced by a benign
    no-op. A finding is marked `proven_execution` only when the active probe
@@ -51,7 +53,7 @@ The distinction matters:
 | Result | Meaning |
 | --- | --- |
 | Reflection | The application returned or rendered the marker. This is not proof of XSS. |
-| Differentially proven finding | The active payload produced its exact proof event; the paired benign control did not. |
+| Differentially proven finding | The active payload produced its exact proof event in the target origin; the paired benign control did not. |
 | Executed without control | The active payload executed, but the paired control could not complete (for example, because the request budget was exhausted). |
 
 For GET URLs, hx also checks query parameters embedded in client-side URL
@@ -65,7 +67,7 @@ browser because browsers do not send them to the server in HTTP requests.
 - Browser-side inspection of client-side fragment parameters.
 - Context-aware payload selection.
 - Chromium-based JavaScript execution verification.
-- Unique payload IDs to associate proof events with individual probes.
+- Unique payload IDs and origin-scoped proof events to associate execution with the exact probe and target origin.
 - Differential A/B verification using a syntax-preserving benign control payload.
 - Per-scan outbound request budget and jittered pacing.
 - Optional proxy support.
