@@ -197,7 +197,7 @@ def test_api_planner_preserves_json_body_and_auth_headers_but_skips_secrets():
     assert surfaces[0].headers["authorization"] == "Bearer private"
     public = site_map.to_dict()["endpoints"][0]
     assert public["headers"]["authorization"] == "<redacted>"
-    assert public["headers"]["x-csrf-token"] == "csrf-private"
+    assert public["headers"]["x-csrf-token"] == "<redacted>"
     assert public["request_body"]["csrf_token"] == "<redacted>"
 
 
