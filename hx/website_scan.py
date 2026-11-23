@@ -245,11 +245,10 @@ async def scan_website(
     include_auth_forms: bool = False,
     storage_state: str | None = None,
 ) -> WebsiteScanResult:
-    """Map a website, then test discovered GET inputs with the XSS engine.
+    """Map a site and run selected engines against discovered input surfaces.
 
-    POST forms are mapped but not submitted automatically because they may
-    change application state. Their testing will require an explicit active
-    form-testing policy and suitable CSRF/session handling.
+    POST forms require explicit opt-in. Testing reuses the live browser session
+    and reloads the source form before each submission to refresh CSRF fields.
     """
     if budget < 1:
         raise ValueError("budget must be at least 1")
