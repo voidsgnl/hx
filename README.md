@@ -129,6 +129,18 @@ python -m playwright install chromium
 Only scan systems that you are authorized to assess. Start with a local test
 application or a deliberately vulnerable lab.
 
+### Map a website without active testing
+
+Use `map` when you only want to inventory the site's same-origin pages,
+forms, behaviour groups, and browser-observed fetch/XHR endpoints:
+
+```bash
+hx map "http://localhost:5000/" --max-pages 100 --max-depth 3
+hx map "http://localhost:5000/" --json
+```
+
+This operation does not inject payloads or submit forms.
+
 ### Automatically scan a website
 
 When the URL has no query input and no POST body, `hx scan` selects website
