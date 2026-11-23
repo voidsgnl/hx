@@ -172,7 +172,12 @@ def scan_cmd(
                 {"param": f.param, "url": f.url, "payload": f.payload,
                  "payload_id": f.probe.payload_id,
                  "context": f.context,
-                 "hits": [asdict(h) for h in f.probe.hits]}
+                 "confidence": f.confidence,
+                 "hits": [asdict(h) for h in f.probe.hits],
+                 "control_hits": (
+                     [asdict(h) for h in f.control_probe.hits]
+                     if f.control_probe else None
+                 )}
                 for f in res.findings
             ],
         }
@@ -196,14 +201,17 @@ def scan_cmd(
         return
 
     table = Table(title="Proven XSS", show_lines=True)
-    table.add_column("param"); table.add_column("context"); table.add_column("payload_id")
-    table.add_column("kind"); table.add_column("evidence")
+    table.add_column("param"); table.add_column("context"); table.add_column("confidence")
+    table.add_column("payload_id"); table.add_column("kind"); table.add_column("evidence")
     for f in res.findings:
         kinds = ",".join(sorted({h.kind for h in f.probe.hits
                                  if h.payload_id == f.probe.payload_id}))
         evid = "; ".join(h.detail[:40] for h in f.probe.hits
                          if h.payload_id == f.probe.payload_id)
-        table.add_row(f.param, f.context, f.probe.payload_id, kinds or "?", evid)
+        table.add_row(
+            f.param, f.context, f.confidence, f.probe.payload_id,
+            kinds or "?", evid,
+        )
     console.print(table)
 
 
