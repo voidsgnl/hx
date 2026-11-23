@@ -28,9 +28,14 @@ class DiscoveredEndpoint:
     content_type: str = ""
 
     def public_dict(self) -> dict:
-        sensitive = {"authorization", "proxy-authorization", "cookie", "set-cookie"}
         safe_headers = {
-            key: ("<redacted>" if key.lower() in sensitive else value)
+            key: (
+                "<redacted>"
+                if any(word in key.lower() for word in (
+                    "authorization", "cookie", "token", "secret", "key", "credential"
+                ))
+                else value
+            )
             for key, value in self.headers.items()
         }
         safe_body = {}
