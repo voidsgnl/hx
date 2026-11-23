@@ -30,5 +30,17 @@ jobs:
       - name: Install Chromium
         run: python -m playwright install --with-deps chromium
 
+      - name: Start local test harness
+        run: |
+          python tests/harness/app.py > /tmp/hx-harness.log 2>&1 &
+          for attempt in $(seq 1 20); do
+            if curl --fail --silent http://127.0.0.1:5000/reflect?q=ready >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          cat /tmp/hx-harness.log
+          exit 1
+
       - name: Run test suite
         run: python -m pytest -q
