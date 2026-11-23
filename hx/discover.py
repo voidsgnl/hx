@@ -70,7 +70,7 @@ _JS_ENUMERATE = """
 
 
 async def discover_forms(page) -> list[FormSpec]:
-    """Return forms with at least one enabled, named, text-like field."""
+    """Return forms with testable text fields or file-upload controls."""
     raw_forms = await page.evaluate(_JS_ENUMERATE)
     forms: list[FormSpec] = []
     for raw_form in raw_forms or []:
@@ -86,7 +86,10 @@ async def discover_forms(page) -> list[FormSpec]:
             )
             for raw_field in raw_form.get("fields", [])
         ]
-        if not any(item.role is FieldRole.INJECTABLE for item in fields):
+        if not any(
+            item.role is FieldRole.INJECTABLE or item.type == "file"
+            for item in fields
+        ):
             continue
         forms.append(FormSpec(
             action=raw_form.get("action", ""),
