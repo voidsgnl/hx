@@ -13,18 +13,11 @@ from urllib.parse import urlparse
 ORACLE_INIT_JS = """
 (() => {
   const hits = [];
-  const activeId = () => {
-    try {
-      return sessionStorage.getItem("__hx_active_payload_id");
-    } catch (_) {
-      return null;
-    }
-  };
-  const record = (kind, detail) => {
+  const record = (kind, detail, id = null) => {
     hits.push({
       kind,
       detail: String(detail).slice(0, 300),
-      id: activeId(),
+      id,
       ts: Date.now(),
     });
   };
@@ -42,8 +35,11 @@ ORACLE_INIT_JS = """
     configurable: false,
     writable: false,
     value: (id) => {
-      if (typeof id === "string" && id === activeId()) {
-        record("proof", id);
+      // The unpredictable ID is embedded in exactly one probe payload.
+      // Record it directly so execution remains attributable after a
+      // cross-origin redirect, where sessionStorage is a different store.
+      if (typeof id === "string") {
+        record("proof", id, id);
       }
     },
   });
@@ -81,13 +77,9 @@ def make_payload_id() -> str:
 
 
 async def _prepare_probe(page, payload_id: str) -> None:
-    await page.evaluate(
-        """({id}) => {
-          sessionStorage.setItem("__hx_active_payload_id", id);
-          window.__hx_reset();
-        }""",
-        {"id": payload_id},
-    )
+    # Reset the current document's telemetry. Proof attribution travels with
+    # the unpredictable ID embedded in the payload, not origin-scoped storage.
+    await page.evaluate("() => window.__hx_reset()")
 
 
 async def _read_hits(page) -> list:
