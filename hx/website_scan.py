@@ -341,9 +341,7 @@ async def scan_website(
         request_guard=mapping_pacer.reserve,
         headless=headless,
         navigation_guard=lambda destination: _is_in_scope(destination, base_url),
-        request_filter=lambda request: _mapping_request_allowed(
-            request.resource_type
-        ),
+        request_filter=_mapping_request_allowed,
         storage_state=storage_state,
     )
     test_pacer: Pacer | None = None
