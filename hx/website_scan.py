@@ -8,9 +8,10 @@ engines can be plugged into this orchestration without changing the crawler.
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
-from urllib.parse import parse_qs, urlencode, urlsplit, urlunsplit
+from urllib.parse import parse_qs, parse_qsl, urlencode, urlsplit, urlunsplit
 
-from hx.scanner import ScanResult, scan
+from hx.engines import AttackSurface, EngineContext, default_registry
+from hx.scanner import ScanResult
 from hx.site_mapper import SiteMapResult, _is_in_scope, _page_key, map_site
 
 
@@ -23,6 +24,7 @@ class WebsiteScanResult:
     skipped_post_forms: int = 0
     skipped_post_endpoints: int = 0
     mapping_budget_exhausted: bool = False
+    engines_run: list[str] = field(default_factory=list)
     requests_used: int = 0
     budget_exhausted: bool = False
 
@@ -38,6 +40,7 @@ class WebsiteScanResult:
             "skipped_post_forms": self.skipped_post_forms,
             "skipped_post_endpoints": self.skipped_post_endpoints,
             "mapping_budget_exhausted": self.mapping_budget_exhausted,
+            "engines_run": sorted(set(self.engines_run)),
             "requests_used": self.requests_used,
             "budget_exhausted": self.budget_exhausted,
             "findings": [
@@ -127,6 +130,56 @@ def _targets_from_map(site_map: SiteMapResult) -> tuple[list[str], int, int]:
     return targets, skipped_post_forms, skipped_post_endpoints
 
 
+def _surface_for(target: str, site_map: SiteMapResult) -> AttackSurface:
+    parts = urlsplit(target)
+    parameters = {
+        name for name, _ in parse_qsl(parts.query, keep_blank_values=True)
+    }
+    fragment = parts.fragment
+    if "?" in fragment:
+        parameters.update(
+            name for name, _ in parse_qsl(fragment.split("?", 1)[1], keep_blank_values=True)
+        )
+    elif "=" in fragment or "&" in fragment:
+        parameters.update(
+            name for name, _ in parse_qsl(fragment, keep_blank_values=True)
+        )
+
+    behaviour = "general"
+    source = "discovered-page"
+    page = next(
+        (item for item in site_map.pages if _page_key(item.url) == _page_key(target)),
+        None,
+    )
+    if page:
+        behaviour = page.behaviour
+    else:
+        endpoint = next((item for item in site_map.endpoints if item.url == target), None)
+        if endpoint:
+            source = "browser-api"
+            parent = next(
+                (item for item in site_map.pages if item.url == endpoint.source_page),
+                None,
+            )
+            if parent:
+                behaviour = parent.behaviour
+        else:
+            for candidate in site_map.pages:
+                for form in candidate.forms:
+                    if form.get("action") == target:
+                        behaviour = candidate.behaviour
+                        source = "discovered-form"
+                        break
+
+    return AttackSurface(
+        url=target,
+        method="GET",
+        parameters=tuple(sorted(parameters)),
+        behaviour=behaviour,
+        source=source,
+    )
+
+
 async def scan_website(
     base_url: str,
     *,
@@ -163,18 +216,30 @@ async def scan_website(
     ) = _targets_from_map(site_map)
     remaining = max(0, budget - site_map.requests_used)
 
+    registry = default_registry()
     for target in targets:
         if remaining <= 0:
             result.budget_exhausted = True
             break
-        scan_result = await scan(
-            target, proxy=proxy, budget=remaining, headless=headless,
-        )
-        result.scans.append(scan_result)
-        result.tested_targets.append(target)
-        remaining = max(0, remaining - scan_result.requests_used)
-        if scan_result.budget_exhausted:
-            result.budget_exhausted = True
+        surface = _surface_for(target, site_map)
+        engines = registry.select(surface)
+        for engine in engines:
+            if remaining <= 0:
+                result.budget_exhausted = True
+                break
+            engine_result = await engine.run(
+                surface,
+                EngineContext(proxy=proxy, budget=remaining, headless=headless),
+            )
+            result.engines_run.append(engine.engine_id)
+            if engine.engine_id == "xss":
+                result.scans.append(engine_result)
+            result.tested_targets.append(target)
+            remaining = max(0, remaining - engine_result.requests_used)
+            if engine_result.budget_exhausted:
+                result.budget_exhausted = True
+                break
+        if result.budget_exhausted:
             break
 
     result.requests_used = budget - remaining
