@@ -163,6 +163,10 @@ def scan_cmd(
         console.print(f"[bold]Website scan:[/bold] {result.target}")
         console.print(
             f"[dim]pages mapped: {len(result.site_map.pages)} | "
+            f"navigation attempts: {result.site_map.pages_attempted} | "
+            f"failed: {len(result.site_map.pages_failed)} | "
+            f"pending: {len(result.site_map.pages_pending)} | "
+            f"framework requests excluded: {result.site_map.framework_requests} | "
             f"UI interactions explored: {result.site_map.interactions_attempted} | "
             f"targets tested: {len(result.tested_targets)} | "
             f"requests used: {result.requests_used}"
