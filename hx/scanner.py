@@ -40,6 +40,7 @@ class RequestSpec:
     headers: dict[str, str] | None = None
     parameters: tuple[str, ...] | None = None
     source_page: str | None = None
+    source_interaction: dict | None = None
 
 
 @dataclass
@@ -138,6 +139,7 @@ def _apply_marker(spec: RequestSpec, param: str, value: str) -> RequestSpec:
             method="JSON", url=spec.url, json_body=body,
             headers=spec.headers, parameters=spec.parameters,
             source_page=spec.source_page,
+            source_interaction=spec.source_interaction,
         )
     raise ValueError(f"unknown method {spec.method}")
 
@@ -178,6 +180,7 @@ async def _run_probe(
             client.page, payload_spec.url, payload_spec.json_body or {},
             payload_id=payload_id, headers=payload_spec.headers,
             source_page=payload_spec.source_page,
+            source_interaction=payload_spec.source_interaction,
         )
     return result, payload_spec.url
 
@@ -248,7 +251,8 @@ async def scan(target: str | RequestSpec, *, proxy: str | None = None,
             marker = _marker_for(param)
             if spec.method == "JSON" and spec.source_page:
                 refreshed = await refresh_api_headers(
-                    client.page, spec.source_page, spec.url
+                    client.page, spec.source_page, spec.url,
+                    interaction=spec.source_interaction,
                 )
                 if refreshed:
                     spec.headers = {**(spec.headers or {}), **refreshed}

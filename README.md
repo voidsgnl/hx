@@ -167,9 +167,26 @@ hx scan "http://localhost:5000/"
 
 Mapping is an internal phase of this command, not a separate CLI operation.
 hx automatically maps same-origin pages, forms, browser-observed fetch/XHR
-requests, and behaviour groups. It then selects relevant attack surfaces and
+requests, and behaviour groups. It also explores a small, bounded set of
+read-oriented UI controls (tabs and explicitly non-submit buttons) to reveal
+APIs that only run after a click. When such an API is discovered, hx records
+the triggering control so it can replay that interaction to refresh rotating
+CSRF headers during testing. It then selects relevant attack surfaces and
 runs the registered vulnerability engines. You do not need to run a map
 command or manually pass a map into the scanner.
+
+Interaction exploration is bounded per page and configurable:
+
+```bash
+hx scan "http://localhost:5000/" --interaction-limit 3
+hx scan "http://localhost:5000/" --interaction-limit 0
+```
+
+hx does not click form-submit controls, fill credentials, or automate login
+forms. Use `--storage-state` for an authenticated browser session. Controls
+whose labels suggest state-changing actions (such as save, delete, send,
+purchase, or logout) are excluded. The limit controls discovery depth; it is
+not a guarantee that every application workflow can be reached.
 
 Control discovery and testing with:
 

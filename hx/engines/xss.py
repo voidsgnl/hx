@@ -20,6 +20,7 @@ class XSSEngine:
                 headers=surface.headers,
                 parameters=surface.parameters,
                 source_page=surface.source_page,
+                source_interaction=surface.source_interaction,
             )
             target = spec
         elif surface.method.upper() == "POST":

@@ -38,6 +38,7 @@ def scan_cmd(
     mode: str = typer.Option("auto", "--mode", help="Scan mode: auto, target, or website"),
     max_pages: int = typer.Option(30, "--max-pages", help="Website mode: maximum pages to map"),
     max_depth: int = typer.Option(2, "--max-depth", help="Website mode: maximum link depth"),
+    interaction_limit: int = typer.Option(3, "--interaction-limit", min=0, max=10, help="Safe UI controls to explore per mapped page (0 disables interaction exploration)"),
     active_post: bool = typer.Option(False, "--active-post", help="Opt in to testing discovered HTML POST forms"),
     active_api: bool = typer.Option(False, "--active-api", help="Opt in to replaying discovered JSON POST APIs with captured auth and CSRF headers"),
     include_auth_forms: bool = typer.Option(False, "--include-auth-forms", help="Also test authentication forms; may trigger lockouts or alter login state"),
@@ -67,6 +68,7 @@ def scan_cmd(
         result = asyncio.run(scan_website(
             url, proxy=proxy, budget=budget, headless=not headed,
             max_pages=max_pages, max_depth=max_depth,
+            interaction_limit=interaction_limit,
             active_post=active_post, active_api=active_api, include_auth_forms=include_auth_forms,
             storage_state=storage_state,
         ))
@@ -76,6 +78,7 @@ def scan_cmd(
         console.print(f"[bold]Website scan:[/bold] {result.target}")
         console.print(
             f"[dim]pages mapped: {len(result.site_map.pages)} | "
+            f"UI interactions explored: {result.site_map.interactions_attempted} | "
             f"targets tested: {len(result.tested_targets)} | "
             f"requests used: {result.requests_used}"
             f"{' (BUDGET EXHAUSTED)' if result.budget_exhausted else ''}[/dim]"

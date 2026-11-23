@@ -200,6 +200,7 @@ def _api_surfaces_from_map(site_map: SiteMapResult) -> list[AttackSurface]:
             request_body=endpoint.request_body,
             headers=endpoint.headers,
             source_page=endpoint.source_page,
+            source_interaction=endpoint.trigger,
         ))
     return surfaces
 
@@ -314,6 +315,7 @@ async def scan_website(
     active_api: bool = False,
     include_auth_forms: bool = False,
     storage_state: str | None = None,
+    interaction_limit: int = 3,
 ) -> WebsiteScanResult:
     """Map a site and run selected engines against discovered input surfaces.
 
@@ -349,6 +351,7 @@ async def scan_website(
             headless=headless,
             _client=client,
             _pacer=mapping_pacer,
+            interaction_limit=interaction_limit,
         )
         result = WebsiteScanResult(
             target=base_url,

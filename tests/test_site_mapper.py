@@ -82,3 +82,27 @@ async def test_maps_javascript_routes_and_fetch_api_endpoints():
     )
     assert endpoint.method == "GET"
     assert endpoint.query_parameters == ["q"]
+
+
+@pytest.mark.asyncio
+async def test_maps_click_triggered_api_and_records_replayable_control():
+    result = await map_site(
+        "http://localhost:5000/interactive-api-page",
+        budget=80,
+        max_pages=1,
+        max_depth=0,
+    )
+    endpoint = next(
+        item for item in result.endpoints
+        if item.url.endswith("/api/interactive-xss")
+    )
+    assert result.interactions_attempted >= 1
+    assert endpoint.method == "POST"
+    assert endpoint.source_page.endswith("/interactive-api-page")
+    assert endpoint.trigger == {
+        "role": "button",
+        "name": "Load profile",
+        "match_index": 0,
+    }
+    assert endpoint.headers.get("authorization") == "Bearer hx-interactive-secret"
+    assert endpoint.headers.get("x-csrf-token")

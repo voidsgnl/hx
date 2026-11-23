@@ -320,3 +320,34 @@ def post_csrf_check():
 
 if __name__ == "__main__":
     app.run(port=5000, debug=False)
+
+@app.route("/interactive-api-page")
+def interactive_api_page():
+    return """<!doctype html><html><body>
+<button type="button" id="load-profile">Load profile</button>
+<script>
+document.getElementById("load-profile").addEventListener("click", async () => {
+  const {token} = await (await fetch("/api/rotate-token")).json();
+  await fetch("/api/interactive-xss", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": "Bearer hx-interactive-secret",
+      "X-CSRF-Token": token
+    },
+    body: JSON.stringify({profile: {bio: "initial"}})
+  });
+});
+</script>
+</body></html>"""
+
+
+@app.route("/api/interactive-xss", methods=["POST"])
+def api_interactive_xss():
+    if request.headers.get("Authorization") != "Bearer hx-interactive-secret":
+        return "authentication required", 401
+    if request.headers.get("X-CSRF-Token") != session.get("hx_csrf"):
+        return "stale CSRF token", 403
+    body = request.get_json(silent=True) or {}
+    bio = (body.get("profile") or {}).get("bio", "")
+    return f"<html><body><div>{bio}</div></body></html>"

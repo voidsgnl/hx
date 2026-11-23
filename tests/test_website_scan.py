@@ -311,3 +311,25 @@ def test_site_map_redacts_nested_api_secrets_recursively():
     assert exported["request_body"]["profile"]["csrf_token"] == "<redacted>"
     assert exported["request_body"]["items"][0]["session_id"] == "<redacted>"
     assert exported["headers"]["x-csrf-token"] == "<redacted>"
+
+
+@pytest.mark.asyncio
+async def test_active_api_replays_click_trigger_and_rotating_csrf_headers():
+    result = await website_scan_module.scan_website(
+        "http://localhost:5000/interactive-api-page",
+        budget=260,
+        max_pages=1,
+        max_depth=0,
+        active_api=True,
+    )
+    endpoint = next(
+        item for item in result.site_map.endpoints
+        if item.url.endswith("/api/interactive-xss")
+    )
+    assert endpoint.trigger["name"] == "Load profile"
+    assert result.site_map.interactions_attempted >= 1
+    assert any(
+        finding.param == "/profile/bio"
+        and finding.confidence == "proven_execution"
+        for finding in result.findings
+    ), result.to_dict()

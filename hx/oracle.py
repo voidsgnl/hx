@@ -287,8 +287,13 @@ async def probe_post_form_from_page(
     return await _collect_result(page, payload_id, _origin_of(action))
 
 
-async def refresh_api_headers(page, source_page: str, action: str) -> dict[str, str]:
-    """Reload the API's source page and capture fresh headers from its own request.
+async def refresh_api_headers(
+    page,
+    source_page: str,
+    action: str,
+    interaction: dict | None = None,
+) -> dict[str, str]:
+    """Reload the source page and replay its observed control to refresh API headers.
 
     This lets applications rotate CSRF or request-signing headers on page load.
     Only replay-relevant headers are returned; browser-managed transport headers
@@ -305,6 +310,15 @@ async def refresh_api_headers(page, source_page: str, action: str) -> dict[str, 
         await page.goto(
             source_page, wait_until="domcontentloaded", timeout=15000
         )
+        if interaction:
+            locator = page.get_by_role(
+                interaction["role"],
+                name=interaction["name"],
+                exact=True,
+            )
+            match_index = int(interaction.get("match_index", 0))
+            if await locator.count() > match_index:
+                await locator.nth(match_index).click(timeout=3000)
         try:
             await page.wait_for_load_state("networkidle", timeout=3000)
         except Exception:
@@ -370,13 +384,16 @@ async def probe_post_json(
     payload_id: str,
     headers: dict[str, str] | None = None,
     source_page: str | None = None,
+    source_interaction: dict | None = None,
     settle: float = 1.8,
 ) -> ProbeResult:
     parsed = urlparse(action)
     origin = f"{parsed.scheme}://{parsed.netloc}/"
     fresh_headers = {}
     if source_page:
-        fresh_headers = await refresh_api_headers(page, source_page, action)
+        fresh_headers = await refresh_api_headers(
+            page, source_page, action, interaction=source_interaction
+        )
     else:
         try:
             await page.goto(origin, wait_until="domcontentloaded", timeout=15000)

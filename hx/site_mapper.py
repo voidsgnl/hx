@@ -1,7 +1,8 @@
 """Read-only, same-origin website mapping for automated scan planning.
 
-The mapper discovers rendered routes, forms, and browser-observed API calls.
-It never submits forms or sends vulnerability payloads.
+The mapper discovers rendered routes, forms, browser-observed API calls, and
+bounded read-oriented UI interactions. It never submits forms or sends
+vulnerability payloads.
 """
 from __future__ import annotations
 
@@ -27,6 +28,7 @@ class DiscoveredEndpoint:
     request_body: dict | None = None
     headers: dict[str, str] = field(default_factory=dict)
     content_type: str = ""
+    trigger: dict | None = None
 
     def public_dict(self) -> dict:
         safe_headers = {
@@ -66,6 +68,7 @@ class DiscoveredEndpoint:
             "request_body": safe_body or None,
             "headers": safe_headers, "content_type": self.content_type,
             "body_parameters": sorted((self.request_body or {}).keys()),
+            "trigger": self.trigger,
         }
 
 
@@ -96,6 +99,7 @@ class SiteMapResult:
     endpoints: list[DiscoveredEndpoint] = field(default_factory=list)
     groups: list[BehaviourGroup] = field(default_factory=list)
     requests_used: int = 0
+    interactions_attempted: int = 0
     budget_exhausted: bool = False
     errors: list[str] = field(default_factory=list)
 
@@ -127,6 +131,33 @@ _ROUTE_CAPTURE_JS = """
   addEventListener("hashchange", record);
   addEventListener("popstate", record);
 })();
+"""
+
+_INTERACTION_CANDIDATES_JS = """
+() => {
+  const excluded = /\\b(log ?out|sign ?out|logout|delete|remove|destroy|save|submit|send|publish|create|update|edit|confirm|purchase|checkout|pay|transfer|invite|reset|cancel|approve|reject|accept|decline|continue|next|finish|upload|download)\\b/i;
+  const nodes = Array.from(document.querySelectorAll(
+    'button[type="button"], [role="button"], [role="tab"]'
+  ));
+  const counts = new Map();
+  return nodes.map(element => {
+    const role = element.getAttribute("role") || "button";
+    const name = (element.getAttribute("aria-label") ||
+      element.innerText || element.getAttribute("title") || "")
+      .replace(/\\s+/g, " ").trim();
+    const type = (element.getAttribute("type") || "").toLowerCase();
+    const disabled = element.disabled ||
+      element.getAttribute("aria-disabled") === "true";
+    const insideForm = Boolean(element.closest("form"));
+    const key = role + "\\u0000" + name;
+    const matchIndex = counts.get(key) || 0;
+    counts.set(key, matchIndex + 1);
+    return {role, name, match_index: matchIndex,
+      allowed: Boolean(name) && name.length <= 80 && !disabled &&
+        !insideForm && !excluded.test(name) &&
+        (element.tagName !== "BUTTON" || type === "button")};
+  }).filter(item => item.allowed).slice(0, 4)
+}
 """
 
 
@@ -210,8 +241,9 @@ async def map_site(
     _pacer: Pacer | None = None,
     _warm: bool = True,
     storage_state: str | None = None,
+    interaction_limit: int = 3,
 ) -> SiteMapResult:
-    """Map a website using read-only browser navigation within one origin."""
+    """Map same-origin pages and a bounded set of safe, read-oriented controls."""
     parsed = urlsplit(base_url)
     if parsed.scheme not in ("http", "https") or not parsed.hostname:
         raise ValueError("base_url must be an absolute http:// or https:// URL")
@@ -221,6 +253,8 @@ async def map_site(
         raise ValueError("max_pages must be at least 1")
     if max_depth < 0:
         raise ValueError("max_depth cannot be negative")
+    if interaction_limit < 0:
+        raise ValueError("interaction_limit cannot be negative")
 
     normalized_base = urlunsplit((
         parsed.scheme.lower(), parsed.netloc, parsed.path or "/",
@@ -265,8 +299,9 @@ async def map_site(
             page_endpoints: list[DiscoveredEndpoint] = []
 
             capture_tasks = set()
+            active_interaction: dict | None = None
 
-            async def capture_request(request, source):
+            async def capture_request(request, source, trigger):
                 request_url = request.url
                 if not _is_in_scope(request_url, normalized_base):
                     return
@@ -307,6 +342,8 @@ async def map_site(
                     if existing and parsed_body:
                         existing.request_body = parsed_body
                         existing.headers.update(raw_headers)
+                    if existing and trigger:
+                        existing.trigger = trigger
                     return
                 endpoints_seen.add(endpoint_key)
                 endpoint = DiscoveredEndpoint(
@@ -322,12 +359,15 @@ async def map_site(
                     request_body=parsed_body,
                     headers=raw_headers,
                     content_type=content_type,
+                    trigger=trigger,
                 )
                 result.endpoints.append(endpoint)
                 page_endpoints.append(endpoint)
 
             def record_request(request, source=url):
-                task = asyncio.create_task(capture_request(request, source))
+                task = asyncio.create_task(
+                    capture_request(request, source, active_interaction)
+                )
                 capture_tasks.add(task)
                 task.add_done_callback(capture_tasks.discard)
             client.page.on("request", record_request)
@@ -372,10 +412,54 @@ async def map_site(
                 discovered_links = await client.page.evaluate(
                     "() => Array.from(document.querySelectorAll('a[href]')).map(a => a.href)"
                 )
+
+                # Explore a bounded set of non-submit controls. Forms, ordinary
+                # links, and controls with state-changing labels are excluded.
+                if interaction_limit:
+                    controls = await client.page.evaluate(_INTERACTION_CANDIDATES_JS)
+                    for control in controls[:interaction_limit]:
+                        active_interaction = {
+                            "role": control["role"],
+                            "name": control["name"],
+                            "match_index": control["match_index"],
+                        }
+                        try:
+                            locator = client.page.get_by_role(
+                                control["role"], name=control["name"], exact=True
+                            )
+                            if await locator.count() <= control["match_index"]:
+                                continue
+                            await locator.nth(control["match_index"]).click(timeout=1500)
+                            result.interactions_attempted += 1
+                            try:
+                                await client.page.wait_for_load_state(
+                                    "networkidle", timeout=1000
+                                )
+                            except Exception:
+                                pass
+                            if capture_tasks:
+                                await asyncio.gather(
+                                    *tuple(capture_tasks), return_exceptions=True
+                                )
+                            if not _is_in_scope(client.page.url, normalized_base):
+                                result.errors.append(
+                                    f"{url}: UI interaction attempted an out-of-scope navigation"
+                                )
+                                break
+                        except BudgetExhausted:
+                            raise
+                        except Exception:
+                            pass
+                        finally:
+                            active_interaction = None
+
                 observed_routes = await client.page.evaluate(
                     "() => window.__hx_routes || []"
                 )
                 discovered_links.extend(observed_routes or [])
+                discovered_links.extend(await client.page.evaluate(
+                    "() => Array.from(document.querySelectorAll('a[href]')).map(a => a.href)"
+                ))
             except BudgetExhausted:
                 result.budget_exhausted = True
                 break
