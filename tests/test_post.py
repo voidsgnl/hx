@@ -93,3 +93,6 @@ async def test_scanner_post_form_uses_live_csrf_token_and_browser_session():
     assert len(res.findings) == 1
     assert res.findings[0].param == "q"
     assert res.findings[0].probe.proven
+    assert res.findings[0].confidence == "proven_execution"
+    assert res.findings[0].control_probe is not None
+    assert not res.findings[0].control_probe.proven
