@@ -164,3 +164,18 @@ Run on 2026-11-22 against the locally hosted Juice Shop at `localhost:3000`.
   the tool-side auth-input gap. DVWA itself was not available on the local
   ports checked earlier, so access and proof against DVWA remain unvalidated.
 
+### Authenticated bWAPP scan (2026-11-23)
+
+- Ran a bounded scan against the locally hosted bWAPP GET XSS page at
+  `http://localhost:4281/xss_get.php` with a supplied session cookie, a
+  budget of 120, and JSON output saved to `/tmp/bwapp-scan.json`. The cookie
+  value is intentionally omitted from this report.
+- The scan reached the application and used 79 requests; the budget was not
+  exhausted. Browser and FastPath fingerprints both reported Chromium 151,
+  with `matches=true`.
+- Coverage reported three parameters discovered and tested, two reflections,
+  zero blocked requests, and zero unaccounted requests. The scanner reported
+  two browser-proven findings, for `firstname` and `lastname`; each proof hit
+  carried the target origin `http://localhost:4281`.
+- The JSON output was successfully parsed with `python -m json.tool`.
+
