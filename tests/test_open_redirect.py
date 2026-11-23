@@ -63,3 +63,14 @@ async def test_open_redirect_engine_ignores_same_origin_redirects():
     )
     assert result.findings == []
     assert result.requests_used == 1
+
+
+def test_open_redirect_engine_does_not_treat_fragment_parameters_as_server_inputs():
+    surface = AttackSurface(
+        url="https://example.test/#/continue?next=%2F",
+        method="GET",
+        parameters=("next",),
+        behaviour="general",
+        source="discovered-page",
+    )
+    assert not OpenRedirectEngine().supports(surface)
