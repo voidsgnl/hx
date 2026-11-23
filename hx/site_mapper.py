@@ -205,8 +205,12 @@ def _page_key(url: str) -> str:
     ))
 
 
-def _is_framework_navigation_request(url: str, headers: dict[str, str] | None = None) -> bool:
-    """Identify framework transport requests that are not application input APIs."""
+def _is_framework_navigation_request(
+    url: str,
+    headers: dict[str, str] | None = None,
+    method: str = "GET",
+) -> bool:
+    """Identify framework transport requests without hiding application POST actions."""
     parts = urlsplit(url)
     query_names = {
         name.lower() for name, _ in parse_qsl(parts.query, keep_blank_values=True)
@@ -215,12 +219,13 @@ def _is_framework_navigation_request(url: str, headers: dict[str, str] | None = 
         key.lower(): value.lower() for key, value in (headers or {}).items()
     }
     accept = normalized_headers.get("accept", "")
-    return (
+    framework_asset = parts.path.startswith(("/_next/", "/_nuxt/"))
+    framework_get = method.upper() == "GET" and (
         "_rsc" in query_names
-        or parts.path.startswith(("/_next/", "/_nuxt/"))
         or normalized_headers.get("rsc") == "1"
         or "text/x-component" in accept
     )
+    return framework_asset or framework_get
 
 
 def _behaviour_for(url: str, forms: list[dict]) -> str:
@@ -341,7 +346,9 @@ async def map_site(
                     all_headers = await request.all_headers()
                 except Exception:
                     all_headers = request.headers
-                if _is_framework_navigation_request(request_url, all_headers):
+                if _is_framework_navigation_request(
+                    request_url, all_headers, request.method
+                ):
                     result.framework_requests += 1
                     if progress:
                         progress(
