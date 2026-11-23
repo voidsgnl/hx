@@ -162,6 +162,7 @@ async def map_site(
     _client: TargetClient | None = None,
     _pacer: Pacer | None = None,
     _warm: bool = True,
+    storage_state: str | None = None,
 ) -> SiteMapResult:
     """Map a website using read-only browser navigation within one origin."""
     parsed = urlsplit(base_url)
@@ -196,6 +197,7 @@ async def map_site(
                 request_guard=pacer.reserve,
                 headless=headless,
                 navigation_guard=lambda destination: _is_in_scope(destination, normalized_base),
+                storage_state=storage_state,
             )
         else:
             client.request_guard = pacer.reserve
