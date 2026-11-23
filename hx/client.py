@@ -69,8 +69,8 @@ class TargetClient:
             if self.request_guard:
                 async def guard_route(route):
                     request_url = route.request.url
-                    if (route.request.is_navigation_request()
-                            and navigation_guard
+                    if (navigation_guard
+                            and route.request.is_navigation_request()
                             and not navigation_guard(request_url)):
                         await route.abort(error_code="blockedbyclient")
                         return
