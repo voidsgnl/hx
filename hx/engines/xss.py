@@ -19,6 +19,7 @@ class XSSEngine:
                 json_body=dict(surface.request_body or {}),
                 headers=surface.headers,
                 parameters=surface.parameters,
+                source_page=surface.source_page,
             )
             target = spec
         elif surface.method.upper() == "POST":
