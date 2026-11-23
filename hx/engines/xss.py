@@ -17,4 +17,7 @@ class XSSEngine:
             proxy=context.proxy,
             budget=context.budget,
             headless=context.headless,
+            _client=context.client,
+            _pacer=context.pacer,
+            _warm=not context.client_ready,
         )
