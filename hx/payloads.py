@@ -151,3 +151,15 @@ def payloads_for(ctx: Context, pid_marker: str = "hxprobe") -> list[str]:
         ],
     }
     return table.get(ctx, table[Context.HTML_BODY])
+
+def control_payload_for(payload: str) -> str | None:
+    """Return a syntax-preserving benign control for an hx proof payload.
+
+    Only the proof callback name changes. The surrounding injection syntax and
+    unpredictable marker remain identical, while the oracle's no-op callback
+    cannot create a proof event.
+    """
+    proof_call = "window.__hx_proof("
+    if payload.count(proof_call) != 1:
+        return None
+    return payload.replace(proof_call, "window.__hx_noop_(", 1)
