@@ -83,3 +83,54 @@ async def test_explicit_profile_is_preserved_on_close(monkeypatch, tmp_path):
     await client.close()
 
     assert profile.is_dir()
+
+
+
+class FailingFakeContext(FakeContext):
+    async def add_init_script(self, script):
+        raise RuntimeError("simulated init-script failure")
+
+
+class FailingFakeChromium(FakeChromium):
+    async def launch_persistent_context(self, user_data_dir, **kwargs):
+        self.profile_dirs.append(user_data_dir)
+        return FailingFakeContext()
+
+
+@pytest.mark.asyncio
+async def test_start_failure_removes_owned_profile_and_stops_playwright(monkeypatch):
+    fake = FakePlaywright()
+    fake.chromium = FailingFakeChromium()
+    monkeypatch.setattr(
+        "hx.client.async_playwright",
+        lambda: FakePlaywrightManager(fake),
+    )
+    client = TargetClient("http://localhost:5000")
+
+    with pytest.raises(RuntimeError, match="simulated init-script failure"):
+        await client.start("/* init */")
+
+    assert client.profile_dir is None
+    assert client._context is None
+    assert client._pw is None
+    assert not __import__("pathlib").Path(fake.chromium.profile_dirs[0]).exists()
+
+
+@pytest.mark.asyncio
+async def test_start_failure_preserves_explicit_profile(monkeypatch, tmp_path):
+    fake = FakePlaywright()
+    fake.chromium = FailingFakeChromium()
+    monkeypatch.setattr(
+        "hx.client.async_playwright",
+        lambda: FakePlaywrightManager(fake),
+    )
+    profile = tmp_path / "persistent-profile"
+    client = TargetClient("http://localhost:5000", profile_dir=str(profile))
+
+    with pytest.raises(RuntimeError, match="simulated init-script failure"):
+        await client.start("/* init */")
+
+    assert profile.is_dir()
+    assert client.profile_dir == str(profile)
+    assert client._context is None
+    assert client._pw is None
