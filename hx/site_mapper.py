@@ -6,6 +6,7 @@ It never submits forms or sends vulnerability payloads.
 from __future__ import annotations
 
 from collections import deque
+import asyncio
 from dataclasses import asdict, dataclass, field
 import json
 from urllib.parse import parse_qsl, parse_qs, urlencode, urljoin, urlsplit, urlunsplit
@@ -249,15 +250,21 @@ async def map_site(
             pages_seen.add(key)
             page_endpoints: list[DiscoveredEndpoint] = []
 
-            def record_request(request, source=url):
+            capture_tasks = set()
+
+            async def capture_request(request, source):
                 request_url = request.url
                 if not _is_in_scope(request_url, normalized_base):
                     return
                 if request.resource_type not in ("xhr", "fetch"):
                     return
                 endpoint_key = (request.method.upper(), request_url)
+                try:
+                    all_headers = await request.all_headers()
+                except Exception:
+                    all_headers = request.headers
                 raw_headers = {
-                    key.lower(): value for key, value in request.headers.items()
+                    key.lower(): value for key, value in all_headers.items()
                     if key.lower() in {
                         "content-type", "authorization", "x-csrf-token",
                         "x-xsrf-token", "x-requested-with", "accept",
@@ -305,6 +312,10 @@ async def map_site(
                 result.endpoints.append(endpoint)
                 page_endpoints.append(endpoint)
 
+            def record_request(request, source=url):
+                task = asyncio.create_task(capture_request(request, source))
+                capture_tasks.add(task)
+                task.add_done_callback(capture_tasks.discard)
             client.page.on("request", record_request)
             status = None
             try:
@@ -328,6 +339,8 @@ async def map_site(
                     await client.page.wait_for_load_state("networkidle", timeout=1500)
                 except Exception:
                     pass
+                if capture_tasks:
+                    await asyncio.gather(*tuple(capture_tasks), return_exceptions=True)
                 title = await client.page.title()
                 forms_raw = await discover_forms(client.page)
                 forms = [
