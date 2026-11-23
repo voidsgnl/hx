@@ -40,7 +40,7 @@ class RequestSpec:
     headers: dict[str, str] | None = None
     parameters: tuple[str, ...] | None = None
     source_page: str | None = None
-    source_interaction: dict | None = None
+    source_interaction: list[dict] | None = None
 
 
 @dataclass

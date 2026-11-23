@@ -103,10 +103,9 @@ async def test_maps_click_triggered_api_and_records_replayable_control():
     assert endpoint is not None, result.to_dict()
     assert endpoint.method == "POST"
     assert endpoint.source_page.endswith("/interactive-api-page")
-    assert endpoint.trigger == {
-        "role": "button",
-        "name": "Load profile",
-        "match_index": 0,
-    }
+    assert endpoint.trigger == [
+        {"role": "button", "name": "Open profile", "match_index": 0},
+        {"role": "button", "name": "Load profile", "match_index": 0},
+    ]
     assert endpoint.headers.get("authorization") == "Bearer hx-interactive-secret"
     assert endpoint.headers.get("x-csrf-token")

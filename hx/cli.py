@@ -38,7 +38,7 @@ def scan_cmd(
     mode: str = typer.Option("auto", "--mode", help="Scan mode: auto, target, or website"),
     max_pages: int = typer.Option(30, "--max-pages", help="Website mode: maximum pages to map"),
     max_depth: int = typer.Option(2, "--max-depth", help="Website mode: maximum link depth"),
-    interaction_limit: int = typer.Option(3, "--interaction-limit", min=0, max=10, help="Safe UI controls to explore per mapped page (0 disables interaction exploration)"),
+    interaction_limit: int = typer.Option(3, "--interaction-limit", min=0, max=10, help="Maximum safe UI steps in each mapped page's interaction chain (0 disables exploration)"),
     active_post: bool = typer.Option(False, "--active-post", help="Opt in to testing discovered HTML POST forms"),
     active_api: bool = typer.Option(False, "--active-api", help="Opt in to replaying discovered JSON POST APIs with captured auth and CSRF headers"),
     include_auth_forms: bool = typer.Option(False, "--include-auth-forms", help="Also test authentication forms; may trigger lockouts or alter login state"),

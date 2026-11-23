@@ -291,7 +291,7 @@ async def refresh_api_headers(
     page,
     source_page: str,
     action: str,
-    interaction: dict | None = None,
+    interaction: list[dict] | dict | None = None,
 ) -> dict[str, str]:
     """Reload the source page and replay its observed control to refresh API headers.
 
@@ -311,14 +311,23 @@ async def refresh_api_headers(
             source_page, wait_until="domcontentloaded", timeout=15000
         )
         if interaction:
-            locator = page.get_by_role(
-                interaction["role"],
-                name=interaction["name"],
-                exact=True,
+            interaction_steps = (
+                interaction if isinstance(interaction, list) else [interaction]
             )
-            match_index = int(interaction.get("match_index", 0))
-            if await locator.count() > match_index:
+            for step in interaction_steps:
+                locator = page.get_by_role(
+                    step["role"],
+                    name=step["name"],
+                    exact=True,
+                )
+                match_index = int(step.get("match_index", 0))
+                if await locator.count() <= match_index:
+                    return {}
                 await locator.nth(match_index).click(timeout=3000)
+                try:
+                    await page.wait_for_load_state("networkidle", timeout=1500)
+                except Exception:
+                    pass
         try:
             await page.wait_for_load_state("networkidle", timeout=3000)
         except Exception:

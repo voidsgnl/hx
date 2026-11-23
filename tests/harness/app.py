@@ -322,8 +322,14 @@ def post_csrf_check():
 def interactive_api_page():
     session["hx_csrf"] = "hx-interactive-csrf"
     return """<!doctype html><html><body>
-<button type="button" id="load-profile">Load profile</button>
+<button type="button" id="open-profile">Open profile</button>
+<section id="profile-panel" hidden>
+  <button type="button" id="load-profile">Load profile</button>
+</section>
 <script>
+document.getElementById("open-profile").addEventListener("click", () => {
+  document.getElementById("profile-panel").hidden = false;
+});
 document.getElementById("load-profile").addEventListener("click", async () => {
   await fetch("/api/interactive-xss", {
     method: "POST",

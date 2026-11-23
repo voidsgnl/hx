@@ -169,13 +169,15 @@ Mapping is an internal phase of this command, not a separate CLI operation.
 hx automatically maps same-origin pages, forms, browser-observed fetch/XHR
 requests, and behaviour groups. It also explores a small, bounded set of
 read-oriented UI controls (tabs and explicitly non-submit buttons) to reveal
-APIs that only run after a click. When such an API is discovered, hx records
-the triggering control so it can replay that interaction to refresh rotating
-CSRF headers during testing. It then selects relevant attack surfaces and
+APIs that only run after a click or a short sequence of clicks. It re-scans the
+DOM after each action, so controls revealed by an earlier step can be reached.
+When an API is discovered, hx records the full interaction path and replays
+that sequence to refresh authentication and rotating CSRF headers during
+testing. It then selects relevant attack surfaces and
 runs the registered vulnerability engines. You do not need to run a map
 command or manually pass a map into the scanner.
 
-Interaction exploration is bounded per page and configurable:
+Interaction chains are bounded per page and configurable:
 
 ```bash
 hx scan "http://localhost:5000/" --interaction-limit 3
@@ -185,8 +187,10 @@ hx scan "http://localhost:5000/" --interaction-limit 0
 hx does not click form-submit controls, fill credentials, or automate login
 forms. Use `--storage-state` for an authenticated browser session. Controls
 whose labels suggest state-changing actions (such as save, delete, send,
-purchase, or logout) are excluded. The limit controls discovery depth; it is
-not a guarantee that every application workflow can be reached.
+purchase, or logout) are excluded. The limit controls the maximum number of sequential UI steps per page; it is
+not a guarantee that every application workflow can be reached. For
+multi-step authenticated pages, provide an existing session with
+`--storage-state`; hx does not enter credentials or submit login forms.
 
 Control discovery and testing with:
 

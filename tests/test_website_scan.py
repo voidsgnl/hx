@@ -331,7 +331,9 @@ async def test_active_api_replays_click_trigger_with_auth_and_csrf_headers():
         None,
     )
     assert endpoint is not None, result.to_dict()
-    assert endpoint.trigger["name"] == "Load profile"
+    assert [step["name"] for step in endpoint.trigger] == [
+        "Open profile", "Load profile"
+    ]
     assert any(
         finding.param == "/profile/bio"
         and finding.confidence == "proven_execution"

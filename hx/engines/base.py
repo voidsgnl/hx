@@ -21,7 +21,7 @@ class AttackSurface:
     request_body: dict | None = None
     headers: dict[str, str] | None = None
     source_page: str | None = None
-    source_interaction: dict | None = None
+    source_interaction: list[dict] | None = None
 
 
 @dataclass(frozen=True)

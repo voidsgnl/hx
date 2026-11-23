@@ -28,7 +28,7 @@ class DiscoveredEndpoint:
     request_body: dict | None = None
     headers: dict[str, str] = field(default_factory=dict)
     content_type: str = ""
-    trigger: dict | None = None
+    trigger: list[dict] | None = None
 
     def public_dict(self) -> dict:
         safe_headers = {
@@ -299,7 +299,7 @@ async def map_site(
             page_endpoints: list[DiscoveredEndpoint] = []
 
             capture_tasks = set()
-            active_interaction: dict | None = None
+            active_interaction: list[dict] | None = None
 
             async def capture_request(request, source, trigger):
                 request_url = request.url
@@ -365,8 +365,9 @@ async def map_site(
                 page_endpoints.append(endpoint)
 
             def record_request(request, source=url):
+                trigger_path = list(active_interaction) if active_interaction else None
                 task = asyncio.create_task(
-                    capture_request(request, source, active_interaction)
+                    capture_request(request, source, trigger_path)
                 )
                 capture_tasks.add(task)
                 task.add_done_callback(capture_tasks.discard)
@@ -416,13 +417,31 @@ async def map_site(
                 # Explore a bounded set of non-submit controls. Forms, ordinary
                 # links, and controls with state-changing labels are excluded.
                 if interaction_limit:
-                    controls = await client.page.evaluate(_INTERACTION_CANDIDATES_JS)
-                    for control in controls[:interaction_limit]:
-                        active_interaction = {
+                    interaction_path: list[dict] = []
+                    seen_interactions: set[tuple[str, str, int]] = set()
+                    # Re-scan the DOM after each action. This reveals controls
+                    # that only become available after an earlier safe action.
+                    for _ in range(interaction_limit):
+                        controls = await client.page.evaluate(_INTERACTION_CANDIDATES_JS)
+                        control = next((
+                            item for item in controls
+                            if (
+                                item["role"], item["name"], item["match_index"]
+                            ) not in seen_interactions
+                        ), None)
+                        if control is None:
+                            break
+                        identity = (
+                            control["role"], control["name"], control["match_index"]
+                        )
+                        seen_interactions.add(identity)
+                        step = {
                             "role": control["role"],
                             "name": control["name"],
                             "match_index": control["match_index"],
                         }
+                        interaction_path.append(step)
+                        active_interaction = list(interaction_path)
                         try:
                             locator = client.page.get_by_role(
                                 control["role"], name=control["name"], exact=True
@@ -453,6 +472,7 @@ async def map_site(
                                 f"{url}: UI control {control.get('name', '')!r}: "
                                 f"{type(exc).__name__}: {str(exc)[:120]}"
                             )
+                            break
                         finally:
                             active_interaction = None
 
