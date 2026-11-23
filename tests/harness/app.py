@@ -181,6 +181,46 @@ def discovery_page():
 </body></html>
 """
 
+@app.route("/post-form-page")
+def post_form_page():
+    return """<!doctype html><html><body>
+<form action="/post-form-reflect" method="POST">
+  <input type="hidden" name="csrf_token" value="abc123">
+  <input type="text" name="q" value="initial">
+  <button type="submit">Submit</button>
+</form>
+</body></html>"""
+
+
+@app.route("/post-form-reflect", methods=["POST"])
+def post_form_reflect():
+    if request.form.get("csrf_token") != "abc123":
+        return "csrf failed", 403
+    return f"<html><body><div>{request.form.get('q', '')}</div></body></html>"
+
+
+@app.route("/auth-form-page")
+def auth_form_page():
+    if request.cookies.get("hx_auth") != "valid":
+        return "authentication required", 401
+    return """<!doctype html><html><body>
+<form action="/auth-post-reflect" method="POST">
+  <input type="hidden" name="csrf_token" value="session-token">
+  <input type="text" name="q" value="initial">
+  <button type="submit">Submit</button>
+</form>
+</body></html>"""
+
+
+@app.route("/auth-post-reflect", methods=["POST"])
+def auth_post_reflect():
+    if request.cookies.get("hx_auth") != "valid":
+        return "authentication required", 401
+    if request.form.get("csrf_token") != "session-token":
+        return "csrf failed", 403
+    return f"<html><body><div>{request.form.get('q', '')}</div></body></html>"
+
+
 @app.route("/post-csrf-check", methods=["POST"])
 def post_csrf_check():
     if request.form.get("csrf_token") != "abc123":
