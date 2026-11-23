@@ -49,7 +49,7 @@ async def test_maps_forms_and_groups_pages_without_submitting_them():
     assert result.pages
     page = next(item for item in result.pages if item.url.endswith("/discovery"))
     assert page.status == 200
-    assert page.behaviour == "form-workflow"
+    assert page.behaviour == "search"
     assert len(page.forms) == 2
     assert {field["name"] for form in page.forms for field in form["fields"]} >= {
         "q", "note"
