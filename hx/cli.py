@@ -39,7 +39,8 @@ def scan_cmd(
     mode: str = typer.Option("auto", "--mode", help="Scan mode: auto, target, or website"),
     max_pages: int = typer.Option(30, "--max-pages", help="Website mode: maximum pages to map"),
     max_depth: int = typer.Option(2, "--max-depth", help="Website mode: maximum link depth"),
-    active_post: bool = typer.Option(False, "--active-post", help="Opt in to testing discovered POST forms"),
+    active_post: bool = typer.Option(False, "--active-post", help="Opt in to testing discovered HTML POST forms"),
+    active_api: bool = typer.Option(False, "--active-api", help="Opt in to replaying discovered JSON POST APIs with captured auth and CSRF headers"),
     include_auth_forms: bool = typer.Option(False, "--include-auth-forms", help="Also test authentication forms; may trigger lockouts or alter login state"),
     storage_state: Optional[str] = typer.Option(None, "--storage-state", help="Playwright storage-state JSON for an authenticated session"),
 ):
@@ -59,15 +60,15 @@ def scan_cmd(
             "target" if data or json_body or parsed_target.query or has_fragment_input
             else "website"
         )
-    if active_post and selected_mode != "website":
-        raise typer.BadParameter("--active-post is only available in website mode")
+    if (active_post or active_api) and selected_mode != "website":
+        raise typer.BadParameter("--active-post and --active-api are only available in website mode")
     if selected_mode == "website":
         if data or json_body:
             raise typer.BadParameter("--data and --json-body are only valid in target mode")
         result = asyncio.run(scan_website(
             url, proxy=proxy, budget=budget, headless=not headed,
             max_pages=max_pages, max_depth=max_depth,
-            active_post=active_post, include_auth_forms=include_auth_forms,
+            active_post=active_post, active_api=active_api, include_auth_forms=include_auth_forms,
             storage_state=storage_state,
         ))
         if json_out:
@@ -83,7 +84,8 @@ def scan_cmd(
         console.print(
             f"[dim]POST forms mapped but not submitted: {result.skipped_post_forms} | "
             f"POST API endpoints mapped but not tested: {result.skipped_post_endpoints} | "
-            f"POST forms tested: {result.post_forms_tested}[/dim]"
+            f"POST forms tested: {result.post_forms_tested} | "
+            f"JSON POST APIs tested: {result.post_apis_tested}[/dim]"
         )
         if result.mapping_budget_exhausted:
             console.print("[yellow]Discovery request allowance reached; testing continued with the reserved budget.[/yellow]")
