@@ -343,6 +343,8 @@ async def scan_website(
     )
     test_pacer: Pacer | None = None
     try:
+        if progress:
+            progress(f"[bold cyan]Discovery phase[/bold cyan] Mapping {base_url}; page limit {max_pages}, depth limit {max_depth}, discovery budget {mapping_budget}")
         site_map = await map_site(
             base_url,
             proxy=proxy,
@@ -355,6 +357,8 @@ async def scan_website(
             interaction_limit=interaction_limit,
             progress=progress,
         )
+        if progress:
+            progress(f"[bold green]Discovery summary[/bold green] {len(site_map.pages)} pages, {len(site_map.endpoints)} browser API endpoints, {site_map.interactions_attempted} UI steps; {site_map.requests_used}/{mapping_budget} requests used")
         result = WebsiteScanResult(
             target=base_url,
             site_map=site_map,
@@ -395,7 +399,7 @@ async def scan_website(
 
         registry = default_registry()
         if progress:
-            progress(f"[bold cyan]Testing[/bold cyan] {len(surfaces)} selected input surfaces; {remaining} requests available")
+            progress(f"[bold cyan]Planning complete[/bold cyan] {len(targets)} GET targets + {len(post_surfaces)} opted-in POST forms + {len(api_surfaces)} opted-in JSON APIs = {len(surfaces)} surfaces; {remaining} testing requests available")
         for index, surface in enumerate(surfaces, start=1):
             target = surface.url
             if progress:
@@ -404,7 +408,11 @@ async def scan_website(
                 result.budget_exhausted = True
                 break
             engines = registry.select(surface)
+            if not engines and progress:
+                progress(f"[dim]No compatible engine[/dim] {surface.method} {target} — no supported input test for this surface")
             for engine in engines:
+                if progress:
+                    progress(f"[bold yellow]Running[/bold yellow] {engine.engine_id} against {surface.method} {target}")
                 if remaining <= 0:
                     result.budget_exhausted = True
                     break
@@ -437,6 +445,8 @@ async def scan_website(
             if result.budget_exhausted:
                 break
 
+        if progress:
+            progress(f"[bold green]Testing phase complete[/bold green] {len(result.tested_targets)} target/engine runs; {test_pacer.used if test_pacer else 0} testing requests used")
         result.requests_used = mapping_pacer.used + (
             test_pacer.used if test_pacer else 0
         )
