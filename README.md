@@ -126,6 +126,36 @@ python -m playwright install chromium
 Only scan systems that you are authorized to assess. Start with a local test
 application or a deliberately vulnerable lab.
 
+### Automatically scan a website
+
+When the URL has no query input and no POST body, `hx scan` selects website
+mode automatically:
+
+```bash
+hx scan "http://localhost:5000/"
+```
+
+Website mode maps same-origin pages, groups them by observable behaviour, then
+runs the current XSS engine against discovered GET query parameters and GET
+form inputs. Control discovery size with:
+
+```bash
+hx scan "http://localhost:5000/" --max-pages 50 --max-depth 3 --budget 300
+```
+
+Choose the mode explicitly when needed:
+
+```bash
+hx scan "http://localhost:5000/" --mode website
+hx scan "http://localhost:5000/reflect" --mode target
+```
+
+The explicit target mode preserves direct testing of paths without query
+strings. Website mode maps POST forms but does not submit them automatically,
+because POST requests can change application state. SQL injection, SSRF,
+authentication, and file-upload engines are not implemented yet; the mapper
+records relevant surfaces so those engines can be added independently.
+
 ### Scan a GET URL
 
 Provide a URL containing one or more query parameters:
@@ -304,10 +334,10 @@ Re-check this compatibility when either dependency is upgraded.
 hx is intentionally a focused scanner, not a general web crawler or
 comprehensive application security testing suite.
 
-- It scans the URL or request data supplied by the operator; it does not
-  crawl an entire site.
-- Form discovery is read-only and does not automatically turn discovered
-  forms into scan requests.
+- Website mode currently tests discovered GET inputs with the XSS engine.
+  POST forms and other vulnerability classes are mapped but not actively
+  tested yet.
+- The separate `discover` command is read-only and never submits forms.
 - Reflection and context detection are heuristics. A reflection may be
   harmless, and a real vulnerability may not be reflected in a way hx
   currently recognizes.
