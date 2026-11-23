@@ -461,3 +461,19 @@ Do not use hx to access data, accounts, or systems without authorization.
 No license is currently declared in the project metadata. Check with the
 repository owner before redistributing or incorporating hx into another
 project.
+
+
+### Authenticated JSON POST API testing
+
+The mapper records same-origin fetch/XHR requests, including JSON request bodies and application headers. API replay is separate from HTML form submission because POST APIs can mutate server state.
+
+```bash
+hx scan "https://app.example.com/" \
+  --storage-state .hx/session.json \
+  --active-api \
+  --budget 500
+```
+
+`--active-api` currently tests same-origin JSON POST endpoints with at least one non-secret scalar body field. It reuses captured Authorization and custom X-* headers (including CSRF headers) plus live browser cookies. Password, token, secret, credential, and CSRF body fields are retained as request context but are not selected as injection parameters. Unsupported content types and bodies that cannot be parsed as JSON are mapped but not actively tested.
+
+Captured Authorization, cookie, token, secret, and credential values are redacted from JSON map/report output. They remain available in memory for request replay. This initial API implementation does not replay multipart, binary, GraphQL-variable, nested JSON, or other non-JSON bodies, and does not invent fields the browser did not send. Enable active API testing only on systems and accounts you are authorized to test, preferably in staging.
