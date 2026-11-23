@@ -9,7 +9,7 @@ class XSSEngine:
     engine_id = "xss"
 
     def supports(self, surface: AttackSurface) -> bool:
-        return surface.method.upper() in {"GET", "POST"} and bool(surface.parameters)
+        return surface.method.upper() in {"GET", "POST", "JSON"} and bool(surface.parameters)
 
     async def run(self, surface: AttackSurface, context: EngineContext) -> ScanResult:
         target = surface.url
