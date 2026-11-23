@@ -159,6 +159,9 @@ async def map_site(
     max_pages: int = 100,
     max_depth: int = 3,
     headless: bool = True,
+    _client: TargetClient | None = None,
+    _pacer: Pacer | None = None,
+    _warm: bool = True,
 ) -> SiteMapResult:
     """Map a website using read-only browser navigation within one origin."""
     parsed = urlsplit(base_url)
@@ -177,8 +180,9 @@ async def map_site(
     ))
     origin = f"{parsed.scheme}://{parsed.netloc}"
     result = SiteMapResult(target=normalized_base)
-    pacer = Pacer(budget=budget)
-    client = TargetClient(origin, proxy=proxy)
+    pacer = _pacer or Pacer(budget=budget)
+    owns_client = _client is None
+    client = _client or TargetClient(origin, proxy=proxy)
     endpoints_seen: set[tuple[str, str]] = set()
     pages_seen: set[str] = set()
     queued: set[str] = set()
@@ -186,17 +190,22 @@ async def map_site(
     group_data: dict[str, BehaviourGroup] = {}
 
     try:
-        await client.start(
-            oracle_init_script=ORACLE_INIT_JS,
-            request_guard=pacer.reserve,
-            headless=headless,
-            navigation_guard=lambda destination: _is_in_scope(destination, normalized_base),
-        )
+        if owns_client:
+            await client.start(
+                oracle_init_script=ORACLE_INIT_JS,
+                request_guard=pacer.reserve,
+                headless=headless,
+                navigation_guard=lambda destination: _is_in_scope(destination, normalized_base),
+            )
+        else:
+            client.request_guard = pacer.reserve
+            client.budget_exhausted = False
         await client.page.add_init_script(_ROUTE_CAPTURE_JS)
-        await pacer.pause()
-        if not await client.warm():
-            result.errors.append("Could not reach the application origin.")
-            return result
+        if _warm:
+            await pacer.pause()
+            if not await client.warm():
+                result.errors.append("Could not reach the application origin.")
+                return result
 
         while queue and len(result.pages) < max_pages:
             url, depth = queue.popleft()
@@ -336,7 +345,8 @@ async def map_site(
     finally:
         result.requests_used = pacer.used
         result.budget_exhausted = result.budget_exhausted or pacer.exhausted or client.budget_exhausted
-        await client.close()
+        if owns_client:
+            await client.close()
 
     result.groups = sorted(group_data.values(), key=lambda group: group.name)
     return result
