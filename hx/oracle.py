@@ -306,10 +306,12 @@ async def probe_post_json(
     try:
         await page.evaluate(
             """async ({action, body, headers}) => {
+              const requestHeaders = new Headers(headers || {});
+              requestHeaders.set("Content-Type", "application/json");
               const response = await fetch(action, {
                 method: "POST",
                 credentials: "same-origin",
-                headers: {"Content-Type": "application/json", ...headers},
+                headers: requestHeaders,
                 body: JSON.stringify(body)
               });
               const text = await response.text();
