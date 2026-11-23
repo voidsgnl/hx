@@ -26,6 +26,8 @@ class WebsiteScanResult:
     skipped_post_forms: int = 0
     skipped_post_endpoints: int = 0
     post_forms_tested: int = 0
+    post_apis_tested: int = 0
+    skipped_post_apis: int = 0
     mapping_budget_exhausted: bool = False
     engines_run: list[str] = field(default_factory=list)
     engine_results: list[dict] = field(default_factory=list)
@@ -44,6 +46,8 @@ class WebsiteScanResult:
             "skipped_post_forms": self.skipped_post_forms,
             "skipped_post_endpoints": self.skipped_post_endpoints,
             "post_forms_tested": self.post_forms_tested,
+            "post_apis_tested": self.post_apis_tested,
+            "skipped_post_apis": self.skipped_post_apis,
             "mapping_budget_exhausted": self.mapping_budget_exhausted,
             "engines_run": sorted(set(self.engines_run)),
             "engine_results": self.engine_results,
@@ -149,6 +153,41 @@ def _targets_from_map(site_map: SiteMapResult) -> tuple[list[str], int, int]:
             skipped_post_endpoints += 1
 
     return targets, skipped_post_forms, skipped_post_endpoints
+
+
+def _api_surfaces_from_map(site_map: SiteMapResult) -> list[AttackSurface]:
+    """Select replayable JSON POST APIs with mutable, non-secret scalar fields."""
+    surfaces = []
+    for endpoint in site_map.endpoints:
+        if endpoint.method != "POST" or not endpoint.request_body:
+            continue
+        if "application/json" not in endpoint.content_type.lower():
+            continue
+        if not _is_in_scope(endpoint.url, site_map.target):
+            continue
+        parameters = tuple(sorted(
+            key for key, value in endpoint.request_body.items()
+            if isinstance(value, (str, int, float, bool))
+            and not any(word in key.lower() for word in (
+                "password", "secret", "token", "credential", "csrf", "api_key"
+            ))
+        ))
+        if not parameters:
+            continue
+        parent = next(
+            (page for page in site_map.pages if page.url == endpoint.source_page),
+            None,
+        )
+        surfaces.append(AttackSurface(
+            url=endpoint.url,
+            method="POST",
+            parameters=parameters,
+            behaviour=parent.behaviour if parent else "general",
+            source="browser-api",
+            request_body=endpoint.request_body,
+            headers=endpoint.headers,
+        ))
+    return surfaces
 
 
 def _surface_for(target: str, site_map: SiteMapResult) -> AttackSurface:
@@ -258,6 +297,7 @@ async def scan_website(
     max_depth: int = 3,
     headless: bool = True,
     active_post: bool = False,
+    active_api: bool = False,
     include_auth_forms: bool = False,
     storage_state: str | None = None,
 ) -> WebsiteScanResult:
@@ -312,12 +352,18 @@ async def scan_website(
             )
             if active_post else []
         )
+        api_surfaces = _api_surfaces_from_map(site_map) if active_api else []
         result.post_forms_tested = len(post_surfaces)
         result.skipped_post_forms = max(
             0, result.skipped_post_forms - result.post_forms_tested
         ) if active_post else result.skipped_post_forms
+        result.post_apis_tested = len(api_surfaces)
+        result.skipped_post_apis = max(
+            0, result.skipped_post_endpoints - result.post_apis_tested
+        ) if active_api else result.skipped_post_endpoints
         surfaces = [_surface_for(target, site_map) for target in targets]
         surfaces.extend(post_surfaces)
+        surfaces.extend(api_surfaces)
         remaining = max(0, budget - mapping_pacer.used)
 
         if remaining:
