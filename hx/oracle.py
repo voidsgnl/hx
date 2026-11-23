@@ -18,6 +18,7 @@ ORACLE_INIT_JS = """
       kind,
       detail: String(detail).slice(0, 300),
       id,
+      origin: location.origin,
       ts: Date.now(),
     });
   };
@@ -67,6 +68,7 @@ class Hit:
     kind: str
     detail: str
     payload_id: str | None
+    origin: str
 
 
 @dataclass
@@ -92,18 +94,48 @@ async def _read_hits(page) -> list:
     return raw or []
 
 
-async def _collect_result(page, payload_id: str) -> ProbeResult:
+def _origin_of(url: str) -> str:
+    """Return the browser-canonical origin for a target URL."""
+    parsed = urlparse(url)
+    scheme = parsed.scheme.lower()
+    host = (parsed.hostname or "").lower()
+    if not scheme or not host:
+        return "null"
+    try:
+        port = parsed.port
+    except ValueError:
+        return "null"
+    if ":" in host:
+        host = f"[{host}]"
+    if port is not None and not (
+        (scheme == "http" and port == 80)
+        or (scheme == "https" and port == 443)
+    ):
+        host = f"{host}:{port}"
+    return f"{scheme}://{host}"
+
+
+async def _collect_result(
+    page, payload_id: str, expected_origin: str
+) -> ProbeResult:
     raw = await _read_hits(page)
     hits = [
-        Hit(kind=h["kind"], detail=h["detail"], payload_id=h.get("id"))
+        Hit(
+            kind=h["kind"],
+            detail=h["detail"],
+            payload_id=h.get("id"),
+            origin=h.get("origin", "null"),
+        )
         for h in raw
     ]
-    # Only the protected callback embedded in our payload can prove execution.
-    # Generic alerts, prompts, and other page activity are telemetry only.
+    # A payload-specific proof only counts when it executes in the origin
+    # explicitly targeted by this probe. Redirecting to another origin must
+    # not turn execution there into proof against the original target.
     proven = any(
         hit.kind == "proof"
         and hit.payload_id == payload_id
         and hit.detail == payload_id
+        and hit.origin == expected_origin
         for hit in hits
     )
     return ProbeResult(proven=proven, payload_id=payload_id, hits=hits)
@@ -120,7 +152,7 @@ async def probe(
         # A redirect or navigation failure may occur after script execution.
         pass
     await asyncio.sleep(settle)
-    return await _collect_result(page, payload_id)
+    return await _collect_result(page, payload_id, _origin_of(url))
 
 
 async def probe_post_form(
@@ -159,7 +191,7 @@ async def probe_post_form(
     except Exception:
         pass
     await asyncio.sleep(settle)
-    return await _collect_result(page, payload_id)
+    return await _collect_result(page, payload_id, _origin_of(action))
 
 
 
@@ -252,7 +284,7 @@ async def probe_post_form_from_page(
     except Exception:
         pass
     await asyncio.sleep(settle)
-    return await _collect_result(page, payload_id)
+    return await _collect_result(page, payload_id, _origin_of(action))
 
 
 async def probe_post_json(
@@ -288,4 +320,4 @@ async def probe_post_json(
     except Exception:
         pass
     await asyncio.sleep(settle)
-    return await _collect_result(page, payload_id)
+    return await _collect_result(page, payload_id, _origin_of(action))
