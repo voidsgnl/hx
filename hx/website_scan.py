@@ -10,7 +10,10 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from urllib.parse import parse_qs, parse_qsl, urlencode, urlsplit, urlunsplit
 
+from hx.client import TargetClient
 from hx.engines import AttackSurface, EngineContext, default_registry
+from hx.oracle import ORACLE_INIT_JS
+from hx.pacer import Pacer
 from hx.scanner import ScanResult
 from hx.site_mapper import SiteMapResult, _is_in_scope, _page_key, map_site
 
@@ -200,51 +203,85 @@ async def scan_website(
     # Reserve most of the request budget for actual vulnerability checks.
     # A large site must not consume the entire budget during discovery alone.
     mapping_budget = max(1, int(budget * 0.4))
-    site_map = await map_site(
-        base_url, proxy=proxy, budget=mapping_budget,
-        max_pages=max_pages, max_depth=max_depth, headless=headless,
+    parsed_base = urlsplit(base_url)
+    origin = f"{parsed_base.scheme}://{parsed_base.netloc}"
+    mapping_pacer = Pacer(budget=mapping_budget)
+    client = TargetClient(origin, proxy=proxy)
+    await client.start(
+        oracle_init_script=ORACLE_INIT_JS,
+        request_guard=mapping_pacer.reserve,
+        headless=headless,
+        navigation_guard=lambda destination: _is_in_scope(destination, base_url),
     )
-    result = WebsiteScanResult(
-        target=base_url,
-        site_map=site_map,
-        mapping_budget_exhausted=site_map.budget_exhausted,
-    )
-    (
-        targets,
-        result.skipped_post_forms,
-        result.skipped_post_endpoints,
-    ) = _targets_from_map(site_map)
-    remaining = max(0, budget - site_map.requests_used)
+    test_pacer: Pacer | None = None
+    try:
+        site_map = await map_site(
+            base_url,
+            proxy=proxy,
+            budget=mapping_budget,
+            max_pages=max_pages,
+            max_depth=max_depth,
+            headless=headless,
+            _client=client,
+            _pacer=mapping_pacer,
+        )
+        result = WebsiteScanResult(
+            target=base_url,
+            site_map=site_map,
+            mapping_budget_exhausted=site_map.budget_exhausted,
+        )
+        (
+            targets,
+            result.skipped_post_forms,
+            result.skipped_post_endpoints,
+        ) = _targets_from_map(site_map)
+        remaining = max(0, budget - mapping_pacer.used)
 
-    registry = default_registry()
-    for target in targets:
-        if remaining <= 0:
-            result.budget_exhausted = True
-            break
-        surface = _surface_for(target, site_map)
-        engines = registry.select(surface)
-        for engine in engines:
-            if remaining <= 0:
+        if remaining:
+            test_pacer = Pacer(budget=remaining)
+            client.request_guard = test_pacer.reserve
+            # The mapping stage may have exhausted its own allowance. The
+            # testing stage gets a fresh allowance, but keeps the same browser
+            # context, cookies, and page instrumentation.
+            client.budget_exhausted = False
+
+        registry = default_registry()
+        for target in targets:
+            if remaining <= 0 or test_pacer is None:
                 result.budget_exhausted = True
                 break
-            engine_result = await engine.run(
-                surface,
-                EngineContext(proxy=proxy, budget=remaining, headless=headless),
-            )
-            result.engines_run.append(engine.engine_id)
-            if engine.engine_id == "xss":
-                result.scans.append(engine_result)
-            result.tested_targets.append(target)
-            remaining = max(0, remaining - engine_result.requests_used)
-            if engine_result.budget_exhausted:
-                result.budget_exhausted = True
+            surface = _surface_for(target, site_map)
+            engines = registry.select(surface)
+            for engine in engines:
+                if remaining <= 0:
+                    result.budget_exhausted = True
+                    break
+                engine_result = await engine.run(
+                    surface,
+                    EngineContext(
+                        proxy=proxy,
+                        budget=remaining,
+                        headless=headless,
+                        client=client,
+                        pacer=test_pacer,
+                        client_ready=True,
+                    ),
+                )
+                result.engines_run.append(engine.engine_id)
+                if engine.engine_id == "xss":
+                    result.scans.append(engine_result)
+                result.tested_targets.append(target)
+                remaining = max(0, remaining - engine_result.requests_used)
+                if engine_result.budget_exhausted:
+                    result.budget_exhausted = True
+                    break
+            if result.budget_exhausted:
                 break
-        if result.budget_exhausted:
-            break
 
-    result.requests_used = budget - remaining
-    result.budget_exhausted = (
-        result.budget_exhausted
-        or remaining == 0
-    )
-    return result
+        result.requests_used = mapping_pacer.used + (
+            test_pacer.used if test_pacer else 0
+        )
+        result.budget_exhausted = result.budget_exhausted or remaining == 0
+        return result
+    finally:
+        await client.close()
