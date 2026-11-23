@@ -65,19 +65,27 @@ async def test_unrelated_page_execution_does_not_prove(client):
 
 
 
-async def test_cross_origin_navigation_still_proves(client):
-    # The fixture warms localhost, while this request uses 127.0.0.1.
-    # They reach the same harness but are distinct browser origins, so
-    # origin-scoped sessionStorage cannot carry the active probe ID.
-    cross_origin = "http://127.0.0.1:5000"
-    payload = "<script>window.__hx_proof('hxcrossorigin')</script>"
-    url = f"{cross_origin}/reflect?q={quote(payload)}"
+async def test_target_origin_execution_proves_even_after_cross_origin_warmup(client):
+    # The browser was initially warmed on localhost, but this probe explicitly
+    # targets 127.0.0.1. The proof must be accepted in the requested origin.
+    target = "http://127.0.0.1:5000"
+    payload = "<script>window.__hx_proof('hxtargetorigin')</script>"
+    url = f"{target}/reflect?q={quote(payload)}"
     result = await probe(
-        client.page, url, payload, payload_id="hxcrossorigin"
+        client.page, url, payload, payload_id="hxtargetorigin"
     )
-    assert result.proven, (
-        f"expected proof after cross-origin navigation, hits={result.hits}"
+    assert result.proven
+    assert result.hits[0].origin == target
+
+
+async def test_execution_after_cross_origin_redirect_is_not_attributed(client):
+    payload = "<script>window.__hx_proof('hxredirectorigin')</script>"
+    url = f"{BASE}/cross-origin-redirect?q={quote(payload)}"
+    result = await probe(
+        client.page, url, payload, payload_id="hxredirectorigin"
     )
+    assert not result.proven
+    assert any(hit.origin == "http://127.0.0.1:5000" for hit in result.hits)
 
 
 
