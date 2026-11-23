@@ -13,6 +13,7 @@ from hx.client import TargetClient
 from hx.discover import FieldRole, discover_forms
 from hx.oracle import ORACLE_INIT_JS
 from hx.scanner import RequestSpec, scan
+from hx.site_mapper import map_site
 from urllib.parse import urlparse
 
 app = typer.Typer(add_completion=False, help="Execution-oracle XSS scanner.")
@@ -173,6 +174,65 @@ def discover_cmd(
                 f"    [{color}]{item.role.value:10}[/{color}] "
                 f"{item.name} ({item.type})"
             )
+
+
+@app.command(name="map")
+def map_cmd(
+    url: str = typer.Argument(..., help="Base URL of the website to map"),
+    budget: int = typer.Option(300, help="Maximum outbound HTTP requests"),
+    max_pages: int = typer.Option(100, "--max-pages", help="Maximum pages to visit"),
+    max_depth: int = typer.Option(3, "--max-depth", help="Maximum link depth from the start URL"),
+    proxy: Optional[str] = typer.Option(None, help="Proxy URL"),
+    json_out: bool = typer.Option(False, "--json", help="Emit the complete site map as JSON"),
+    headed: bool = typer.Option(False, "--headed", help="Show the Chromium browser window"),
+):
+    """Map same-origin pages, forms, and browser-observed API endpoints without submitting forms."""
+    result = asyncio.run(map_site(
+        url, proxy=proxy, budget=budget, max_pages=max_pages,
+        max_depth=max_depth, headless=not headed,
+    ))
+    if json_out:
+        typer.echo(json.dumps(result.to_dict(), indent=2))
+        return
+
+    console.print(f"[bold]Website map:[/bold] {result.target}")
+    console.print(
+        f"[dim]pages: {len(result.pages)} | API endpoints: {len(result.endpoints)} | "
+        f"requests: {result.requests_used}"
+        f"{' | REQUEST BUDGET EXHAUSTED' if result.budget_exhausted else ''}[/dim]"
+    )
+    if result.pages:
+        table = Table(title="Discovered pages", show_lines=True)
+        table.add_column("depth", justify="right")
+        table.add_column("status", justify="right")
+        table.add_column("behaviour")
+        table.add_column("parameters")
+        table.add_column("URL")
+        for page in result.pages:
+            table.add_row(
+                str(page.depth), str(page.status or "-"), page.behaviour,
+                ", ".join(page.query_parameters) or "-",
+                page.url,
+            )
+        console.print(table)
+
+    if result.groups:
+        groups = Table(title="Behaviour groups")
+        groups.add_column("group")
+        groups.add_column("pages", justify="right")
+        groups.add_column("form patterns", justify="right")
+        groups.add_column("API endpoints", justify="right")
+        for group in result.groups:
+            groups.add_row(
+                group.name, str(len(group.pages)),
+                str(len(group.form_signatures)), str(len(group.endpoint_urls)),
+            )
+        console.print(groups)
+
+    if result.errors:
+        console.print("[yellow]Mapping notes:[/yellow]")
+        for error in result.errors:
+            console.print(f"  - {error}")
 
 
 if __name__ == "__main__":
