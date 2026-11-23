@@ -26,6 +26,7 @@ class WebsiteScanResult:
     tested_targets: list[str] = field(default_factory=list)
     skipped_post_forms: int = 0
     skipped_post_endpoints: int = 0
+    post_forms_tested: int = 0
     mapping_budget_exhausted: bool = False
     engines_run: list[str] = field(default_factory=list)
     requests_used: int = 0
@@ -42,6 +43,7 @@ class WebsiteScanResult:
             "tested_targets": self.tested_targets,
             "skipped_post_forms": self.skipped_post_forms,
             "skipped_post_endpoints": self.skipped_post_endpoints,
+            "post_forms_tested": self.post_forms_tested,
             "mapping_budget_exhausted": self.mapping_budget_exhausted,
             "engines_run": sorted(set(self.engines_run)),
             "requests_used": self.requests_used,
@@ -183,6 +185,54 @@ def _surface_for(target: str, site_map: SiteMapResult) -> AttackSurface:
     )
 
 
+def _post_surfaces_from_map(
+    site_map: SiteMapResult,
+    *,
+    include_auth_forms: bool = False,
+) -> list[AttackSurface]:
+    """Build safe-to-attempt POST form surfaces from mapped metadata.
+
+    Password and file controls are never mutated by this engine. Authentication
+    forms are excluded unless the operator separately opts in.
+    """
+    surfaces: list[AttackSurface] = []
+    seen: set[tuple[str, str, tuple[str, ...]]] = set()
+    for page in site_map.pages:
+        if page.behaviour == "authentication" and not include_auth_forms:
+            continue
+        for form in page.forms:
+            if form.get("method", "GET").upper() != "POST":
+                continue
+            if any(
+                field.get("type") == "file"
+                for field in form.get("fields", [])
+            ):
+                continue
+            parameters = tuple(sorted({
+                field.get("name", "")
+                for field in form.get("fields", [])
+                if field.get("role") == "injectable"
+                and field.get("name")
+                and field.get("type") != "password"
+            }))
+            action = form.get("action", "")
+            if not parameters or not action or not _is_in_scope(action, site_map.target):
+                continue
+            key = (action, page.url, parameters)
+            if key in seen:
+                continue
+            seen.add(key)
+            surfaces.append(AttackSurface(
+                url=action,
+                method="POST",
+                parameters=parameters,
+                behaviour=page.behaviour,
+                source="discovered-form",
+                form_page=page.url,
+            ))
+    return surfaces
+
+
 async def scan_website(
     base_url: str,
     *,
@@ -191,6 +241,9 @@ async def scan_website(
     max_pages: int = 100,
     max_depth: int = 3,
     headless: bool = True,
+    active_post: bool = False,
+    include_auth_forms: bool = False,
+    storage_state: str | None = None,
 ) -> WebsiteScanResult:
     """Map a website, then test discovered GET inputs with the XSS engine.
 
@@ -214,6 +267,7 @@ async def scan_website(
         request_guard=mapping_pacer.reserve,
         headless=headless,
         navigation_guard=lambda destination: _is_in_scope(destination, base_url),
+        storage_state=storage_state,
     )
     test_pacer: Pacer | None = None
     try:
@@ -237,6 +291,18 @@ async def scan_website(
             result.skipped_post_forms,
             result.skipped_post_endpoints,
         ) = _targets_from_map(site_map)
+        post_surfaces = (
+            _post_surfaces_from_map(
+                site_map, include_auth_forms=include_auth_forms
+            )
+            if active_post else []
+        )
+        result.post_forms_tested = len(post_surfaces)
+        result.skipped_post_forms = max(
+            0, result.skipped_post_forms - result.post_forms_tested
+        ) if active_post else result.skipped_post_forms
+        surfaces = [_surface_for(target, site_map) for target in targets]
+        surfaces.extend(post_surfaces)
         remaining = max(0, budget - mapping_pacer.used)
 
         if remaining:
@@ -248,11 +314,11 @@ async def scan_website(
             client.budget_exhausted = False
 
         registry = default_registry()
-        for target in targets:
+        for surface in surfaces:
+            target = surface.url
             if remaining <= 0 or test_pacer is None:
                 result.budget_exhausted = True
                 break
-            surface = _surface_for(target, site_map)
             engines = registry.select(surface)
             for engine in engines:
                 if remaining <= 0:
