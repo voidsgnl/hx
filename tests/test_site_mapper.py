@@ -4,6 +4,7 @@ import pytest
 
 from hx.site_mapper import (
     _behaviour_for,
+    _is_framework_navigation_request,
     _is_in_scope,
     _page_key,
     map_site,
@@ -29,6 +30,23 @@ def test_page_key_deduplicates_values_but_preserves_parameter_names():
     third = _page_key("https://example.test/search?term=bob")
     assert first == second
     assert first != third
+
+
+def test_framework_navigation_requests_are_not_application_api_surfaces():
+    assert _is_framework_navigation_request(
+        "https://example.test/about?_rsc=abc"
+    )
+    assert _is_framework_navigation_request(
+        "https://example.test/_next/data/build-id/index.json"
+    )
+    assert _is_framework_navigation_request(
+        "https://example.test/about",
+        {"RSC": "1", "Accept": "text/x-component"},
+    )
+    assert not _is_framework_navigation_request(
+        "https://example.test/api/search?q=term",
+        {"Accept": "application/json"},
+    )
 
 
 def test_behaviour_classifier_uses_route_and_form_semantics():
