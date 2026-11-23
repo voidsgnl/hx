@@ -67,7 +67,7 @@ def _with_fragment_param(url: str, param: str, value: str) -> str:
     elif "=" in route or "&" in route:
         prefix, query = "", route
     else:
-        prefix, query = route, ""
+        prefix, query = (route + "?", "") if route else ("", "")
     values = parse_qs(query, keep_blank_values=True)
     values[param] = [value]
     fragment = prefix + urlencode(values, doseq=True)
