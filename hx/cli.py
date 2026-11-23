@@ -39,6 +39,9 @@ def scan_cmd(
     mode: str = typer.Option("auto", "--mode", help="Scan mode: auto, target, or website"),
     max_pages: int = typer.Option(30, "--max-pages", help="Website mode: maximum pages to map"),
     max_depth: int = typer.Option(2, "--max-depth", help="Website mode: maximum link depth"),
+    active_post: bool = typer.Option(False, "--active-post", help="Opt in to testing discovered POST forms"),
+    include_auth_forms: bool = typer.Option(False, "--include-auth-forms", help="Also test authentication forms; may trigger lockouts or alter login state"),
+    storage_state: Optional[str] = typer.Option(None, "--storage-state", help="Playwright storage-state JSON for an authenticated session"),
 ):
     """Scan an explicit input or automatically map and scan a website."""
     if data and json_body:
@@ -46,6 +49,8 @@ def scan_cmd(
     mode = mode.lower()
     if mode not in {"auto", "target", "website"}:
         raise typer.BadParameter("--mode must be auto, target, or website")
+    if include_auth_forms and not active_post:
+        raise typer.BadParameter("--include-auth-forms requires --active-post")
     parsed_target = urlparse(url)
     has_fragment_input = "?" in parsed_target.fragment or "=" in parsed_target.fragment
     selected_mode = mode
@@ -60,6 +65,8 @@ def scan_cmd(
         result = asyncio.run(scan_website(
             url, proxy=proxy, budget=budget, headless=not headed,
             max_pages=max_pages, max_depth=max_depth,
+            active_post=active_post, include_auth_forms=include_auth_forms,
+            storage_state=storage_state,
         ))
         if json_out:
             typer.echo(json.dumps(result.to_dict(), indent=2))
@@ -73,7 +80,8 @@ def scan_cmd(
         )
         console.print(
             f"[dim]POST forms mapped but not submitted: {result.skipped_post_forms} | "
-            f"POST API endpoints mapped but not tested: {result.skipped_post_endpoints}[/dim]"
+            f"POST API endpoints mapped but not tested: {result.skipped_post_endpoints} | "
+            f"POST forms tested: {result.post_forms_tested}[/dim]"
         )
         if result.mapping_budget_exhausted:
             console.print("[yellow]Discovery request allowance reached; testing continued with the reserved budget.[/yellow]")
@@ -120,7 +128,8 @@ def scan_cmd(
     else:
         spec = RequestSpec(method="GET", url=url)
     res = asyncio.run(scan(
-        spec, proxy=proxy, budget=budget, headless=not headed
+        spec, proxy=proxy, budget=budget, headless=not headed,
+        storage_state=storage_state,
     ))
 
     if json_out:
@@ -171,6 +180,43 @@ def scan_cmd(
 
 
 app.command(name="scan")(scan_cmd)
+
+
+@app.command(name="session")
+def session_cmd(
+    url: str = typer.Argument(..., help="Application origin or login page"),
+    output: str = typer.Option(".hx/session.json", "--output", help="Private storage-state output path"),
+    proxy: Optional[str] = typer.Option(None, help="Proxy URL"),
+):
+    """Open Chromium for manual login and save an authenticated browser session."""
+
+    async def capture():
+        parsed = urlparse(url)
+        if parsed.scheme not in ("http", "https") or not parsed.hostname:
+            raise typer.BadParameter("URL must be an absolute http:// or https:// URL")
+        origin = f"{parsed.scheme}://{parsed.netloc}"
+        client = TargetClient(origin, proxy=proxy)
+        await client.start(
+            oracle_init_script=ORACLE_INIT_JS,
+            headless=False,
+        )
+        try:
+            try:
+                await client.page.goto(
+                    url, wait_until="domcontentloaded", timeout=20000
+                )
+            except Exception:
+                pass
+            console.print("[bold]Log in using the Chromium window.[/bold]")
+            console.print("When the application is authenticated, return here and press Enter.")
+            input()
+            await client.save_storage_state(output)
+        finally:
+            await client.close()
+
+    asyncio.run(capture())
+    console.print(f"[green]Authenticated session saved to {output}[/green]")
+    console.print("[yellow]Treat this file like a password. Do not commit or share it.[/yellow]")
 
 
 @app.command(name="discover")
