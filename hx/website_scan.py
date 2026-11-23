@@ -200,10 +200,12 @@ async def scan_website(
     """
     if budget < 1:
         raise ValueError("budget must be at least 1")
+    parsed_base = urlsplit(base_url)
+    if parsed_base.scheme not in ("http", "https") or not parsed_base.hostname:
+        raise ValueError("base_url must be an absolute http:// or https:// URL")
     # Reserve most of the request budget for actual vulnerability checks.
     # A large site must not consume the entire budget during discovery alone.
     mapping_budget = max(1, int(budget * 0.4))
-    parsed_base = urlsplit(base_url)
     origin = f"{parsed_base.scheme}://{parsed_base.netloc}"
     mapping_pacer = Pacer(budget=mapping_budget)
     client = TargetClient(origin, proxy=proxy)
