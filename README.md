@@ -47,6 +47,9 @@ browser because browsers do not send them to the server in HTTP requests.
 - Optional proxy support.
 - Headless mode by default, with an optional visible browser.
 - Read-only HTML form discovery with text and JSON output.
+- Automatic same-origin website mapping and XSS testing of discovered GET inputs.
+- Behaviour grouping for authentication, search, user-content, file-handling, and form workflows.
+- Discovery of browser-observed same-origin fetch/XHR endpoints.
 - JSON scan output for scripting and further analysis.
 
 ## Requirements
