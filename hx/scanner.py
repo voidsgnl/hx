@@ -94,7 +94,9 @@ def _apply_marker(spec: RequestSpec, param: str, value: str) -> RequestSpec:
     if spec.method == "POST":
         form = dict(spec.form or {})
         form[param] = value
-        return RequestSpec(method="POST", url=spec.url, form=form)
+        return RequestSpec(
+            method="POST", url=spec.url, form=form, form_page=spec.form_page
+        )
     if spec.method == "JSON":
         body = dict(spec.json_body or {})
         body[param] = value
