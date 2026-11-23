@@ -1,9 +1,11 @@
+from types import SimpleNamespace
 from urllib.parse import urlsplit
 
 import pytest
 
 from hx.site_mapper import (
     _behaviour_for,
+    _discovery_allowances,
     _is_framework_navigation_request,
     _is_in_scope,
     _mapping_request_allowed,
@@ -34,13 +36,67 @@ def test_page_key_deduplicates_values_but_preserves_parameter_names():
 
 
 def test_mapping_request_filter_skips_passive_assets_but_keeps_app_resources():
-    assert not _mapping_request_allowed("image")
-    assert not _mapping_request_allowed("font")
-    assert not _mapping_request_allowed("media")
-    assert _mapping_request_allowed("script")
-    assert _mapping_request_allowed("stylesheet")
-    assert _mapping_request_allowed("document")
-    assert _mapping_request_allowed("fetch")
+    for resource_type in ("image", "font", "media"):
+        assert not _mapping_request_allowed(resource_type)
+    for resource_type in ("script", "stylesheet", "document", "fetch"):
+        assert _mapping_request_allowed(resource_type)
+
+
+def test_mapping_request_filter_blocks_framework_gets_before_budgeting():
+    rsc_prefetch = SimpleNamespace(
+        resource_type="fetch",
+        method="GET",
+        url="https://example.test/about?_rsc=abc",
+        headers={"rsc": "1", "accept": "text/x-component"},
+    )
+    server_action = SimpleNamespace(
+        resource_type="fetch",
+        method="POST",
+        url="https://example.test/profile",
+        headers={"next-action": "action-id", "accept": "text/x-component"},
+    )
+    application_api = SimpleNamespace(
+        resource_type="fetch",
+        method="GET",
+        url="https://example.test/api/search?q=term",
+        headers={"accept": "application/json"},
+    )
+    assert not _mapping_request_allowed(rsc_prefetch)
+    assert _mapping_request_allowed(server_action)
+    assert _mapping_request_allowed(application_api)
+
+
+def test_discovery_allowances_preserve_page_and_interaction_capacity():
+    page_reserve, interaction_allowance = _discovery_allowances(
+        budget=120,
+        requests_used=14,
+        interaction_requests_used=0,
+        queued_pages=19,
+        page_slots_left=29,
+    )
+    assert page_reserve == 70
+    assert interaction_allowance == 12
+
+    # UI traffic is tracked separately, so it does not silently consume the
+    # page-coverage reservation; the total hard budget still applies.
+    page_reserve, interaction_allowance = _discovery_allowances(
+        budget=120,
+        requests_used=26,
+        interaction_requests_used=12,
+        queued_pages=18,
+        page_slots_left=28,
+    )
+    assert page_reserve == 70
+    assert interaction_allowance == 12
+
+    _, exhausted_interaction_allowance = _discovery_allowances(
+        budget=120,
+        requests_used=50,
+        interaction_requests_used=36,
+        queued_pages=10,
+        page_slots_left=20,
+    )
+    assert exhausted_interaction_allowance == 0
 
 
 def test_framework_navigation_requests_are_not_application_api_surfaces():
