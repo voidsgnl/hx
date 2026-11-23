@@ -181,6 +181,16 @@ def discovery_page():
 </body></html>
 """
 
+@app.route("/redirect")
+def redirect_endpoint():
+    return redirect(request.args.get("next", "/"))
+
+
+@app.route("/internal-redirect")
+def internal_redirect_endpoint():
+    return redirect(request.args.get("next", "/"))
+
+
 @app.route("/post-form-page")
 def post_form_page():
     return """<!doctype html><html><body>
