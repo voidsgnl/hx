@@ -157,6 +157,96 @@ async def probe_post_form(
     return await _collect_result(page, payload_id)
 
 
+
+async def submit_form_from_page(
+    page,
+    form_page: str,
+    action: str,
+    param: str,
+    value: str,
+) -> str:
+    """Reload a real form page, replace one field, and submit its live form.
+
+    This preserves browser cookies, hidden CSRF fields, and application
+    submit handlers instead of reconstructing an unauthenticated POST.
+    """
+    try:
+        await page.goto(form_page, wait_until="domcontentloaded", timeout=15000)
+    except Exception:
+        pass
+    await page.evaluate(
+        """({action, param, value}) => {
+          const expected = new URL(action, location.href).href;
+          const form = Array.from(document.forms).find(candidate =>
+            new URL(candidate.action || location.href, location.href).href === expected
+            && (candidate.method || "GET").toUpperCase() === "POST"
+          );
+          if (!form) throw new Error("matching POST form not found");
+          const field = Array.from(form.elements).find(item =>
+            item.name === param && !item.disabled
+          );
+          if (!field) throw new Error("test field not found in POST form");
+          field.value = value;
+          field.dispatchEvent(new Event("input", {bubbles: true}));
+          field.dispatchEvent(new Event("change", {bubbles: true}));
+          form.requestSubmit();
+        }""",
+        {"action": action, "param": param, "value": value},
+    )
+    try:
+        await page.wait_for_load_state("domcontentloaded", timeout=10000)
+    except Exception:
+        # SPA handlers may consume the submit event without a document load.
+        pass
+    await asyncio.sleep(0.35)
+    return await page.content()
+
+
+async def probe_post_form_from_page(
+    page,
+    form_page: str,
+    action: str,
+    param: str,
+    payload: str,
+    *,
+    payload_id: str,
+    settle: float = 1.5,
+) -> ProbeResult:
+    try:
+        await page.goto(form_page, wait_until="domcontentloaded", timeout=15000)
+    except Exception:
+        pass
+    await _prepare_probe(page)
+    try:
+        await page.evaluate(
+            """({action, param, value}) => {
+              const expected = new URL(action, location.href).href;
+              const form = Array.from(document.forms).find(candidate =>
+                new URL(candidate.action || location.href, location.href).href === expected
+                && (candidate.method || "GET").toUpperCase() === "POST"
+              );
+              if (!form) throw new Error("matching POST form not found");
+              const field = Array.from(form.elements).find(item =>
+                item.name === param && !item.disabled
+              );
+              if (!field) throw new Error("test field not found in POST form");
+              field.value = value;
+              field.dispatchEvent(new Event("input", {bubbles: true}));
+              field.dispatchEvent(new Event("change", {bubbles: true}));
+              form.requestSubmit();
+            }""",
+            {"action": action, "param": param, "value": payload},
+        )
+    except Exception:
+        pass
+    try:
+        await page.wait_for_load_state("domcontentloaded", timeout=10000)
+    except Exception:
+        pass
+    await asyncio.sleep(settle)
+    return await _collect_result(page, payload_id)
+
+
 async def probe_post_json(
     page,
     action: str,
