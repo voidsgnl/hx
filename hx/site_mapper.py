@@ -236,6 +236,14 @@ async def map_site(
                     url, wait_until="domcontentloaded", timeout=20000
                 )
                 status = response.status if response else None
+                final_url = client.page.url
+                if not _is_in_scope(final_url, normalized_base):
+                    result.errors.append(
+                        f"{url}: navigation ended outside the allowed origin"
+                    )
+                    continue
+                url = final_url
+                pages_seen.add(_page_key(final_url))
                 try:
                     await client.page.wait_for_load_state("networkidle", timeout=1500)
                 except Exception:
