@@ -33,7 +33,7 @@ def test_page_key_deduplicates_values_but_preserves_parameter_names():
     assert first != third
 
 
-def test_mapping_request_filter_skips_passive_assets_and_third_party_hosts():
+def test_mapping_request_filter_skips_passive_assets_but_keeps_app_resources():
     assert not _mapping_request_allowed("image")
     assert not _mapping_request_allowed("font")
     assert not _mapping_request_allowed("media")
