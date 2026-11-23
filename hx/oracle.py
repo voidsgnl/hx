@@ -132,7 +132,7 @@ async def probe_post_form(
         await page.goto(origin, wait_until="domcontentloaded", timeout=15000)
     except Exception:
         pass
-    await _prepare_probe(page, payload_id)
+    await _prepare_probe(page)
     try:
         await page.evaluate(
             """({action, fields}) => {
@@ -171,7 +171,7 @@ async def probe_post_json(
         await page.goto(origin, wait_until="domcontentloaded", timeout=15000)
     except Exception:
         pass
-    await _prepare_probe(page, payload_id)
+    await _prepare_probe(page)
     try:
         await page.evaluate(
             """async ({action, body}) => {
