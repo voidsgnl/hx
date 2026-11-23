@@ -53,7 +53,12 @@ def _marker_for(param: str) -> str:
 def _fragment_query(fragment: str) -> dict[str, list[str]]:
     """Extract query parameters from a client-side route fragment."""
     route = fragment.lstrip("#")
-    query = route.split("?", 1)[1] if "?" in route else route
+    if "?" in route:
+        query = route.split("?", 1)[1]
+    elif "=" in route or "&" in route:
+        query = route
+    else:
+        return {}
     return parse_qs(query, keep_blank_values=True)
 
 
@@ -166,6 +171,7 @@ async def scan(target: str | RequestSpec, *, proxy: str | None = None,
                     probe_spec.url, probe_spec.json_body or {}, cookies
                 ) if c else ""
             if c:
+                c.param = param
                 result.reflections.append(c)
                 candidates.append((param, c, body, "http"))
 
@@ -184,7 +190,8 @@ async def scan(target: str | RequestSpec, *, proxy: str | None = None,
             offset = body.find(marker)
             if offset >= 0:
                 c = Candidate(
-                    url=marker_url, marker=marker, offset=offset, status=200
+                    url=marker_url, marker=marker, offset=offset,
+                    status=200, param=param,
                 )
                 result.reflections.append(c)
                 candidates.append((param, c, body, "fragment"))
