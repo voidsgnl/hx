@@ -14,6 +14,7 @@ from hx.discover import FieldRole, discover_forms
 from hx.oracle import ORACLE_INIT_JS
 from hx.scanner import RequestSpec, scan
 from hx.site_mapper import map_site
+from hx.website_scan import scan_website
 from urllib.parse import urlparse
 
 app = typer.Typer(add_completion=False, help="Execution-oracle XSS scanner.")
@@ -35,10 +36,67 @@ def scan_cmd(
     proxy: Optional[str] = typer.Option(None, help="Proxy URL, e.g. http://127.0.0.1:8080"),
     json_out: bool = typer.Option(False, "--json", help="Emit JSON instead of a table"),
     headed: bool = typer.Option(False, "--headed", help="Show the Chromium browser window"),
+    mode: str = typer.Option("auto", "--mode", help="Scan mode: auto, target, or website"),
+    max_pages: int = typer.Option(30, "--max-pages", help="Website mode: maximum pages to map"),
+    max_depth: int = typer.Option(2, "--max-depth", help="Website mode: maximum link depth"),
 ):
-    """Scan a URL for reflected/DOM XSS, proving findings via browser execution."""
+    """Scan an explicit input or automatically map and scan a website."""
     if data and json_body:
         raise typer.BadParameter("--data and --json-body are mutually exclusive")
+    mode = mode.lower()
+    if mode not in {"auto", "target", "website"}:
+        raise typer.BadParameter("--mode must be auto, target, or website")
+    parsed_target = urlparse(url)
+    has_fragment_input = "?" in parsed_target.fragment or "=" in parsed_target.fragment
+    selected_mode = mode
+    if selected_mode == "auto":
+        selected_mode = (
+            "target" if data or json_body or parsed_target.query or has_fragment_input
+            else "website"
+        )
+    if selected_mode == "website":
+        if data or json_body:
+            raise typer.BadParameter("--data and --json-body are only valid in target mode")
+        result = asyncio.run(scan_website(
+            url, proxy=proxy, budget=budget, headless=not headed,
+            max_pages=max_pages, max_depth=max_depth,
+        ))
+        if json_out:
+            typer.echo(json.dumps(result.to_dict(), indent=2))
+            return
+        console.print(f"[bold]Website scan:[/bold] {result.target}")
+        console.print(
+            f"[dim]pages mapped: {len(result.site_map.pages)} | "
+            f"targets tested: {len(result.tested_targets)} | "
+            f"requests used: {result.requests_used}"
+            f"{' (BUDGET EXHAUSTED)' if result.budget_exhausted else ''}[/dim]"
+        )
+        console.print(
+            f"[dim]POST forms mapped but not submitted: {result.skipped_post_forms}[/dim]"
+        )
+        if result.site_map.groups:
+            group_table = Table(title="Discovered behaviour groups")
+            group_table.add_column("behaviour")
+            group_table.add_column("pages", justify="right")
+            for group in result.site_map.groups:
+                group_table.add_row(group.name, str(len(group.pages)))
+            console.print(group_table)
+        if not result.findings:
+            console.print("[yellow]no proven XSS on the tested GET inputs[/yellow]")
+            return
+        table = Table(title="Website scan — proven XSS", show_lines=True)
+        table.add_column("param")
+        table.add_column("context")
+        table.add_column("payload_id")
+        table.add_column("URL")
+        for finding in result.findings:
+            table.add_row(
+                finding.param, finding.context, finding.probe.payload_id,
+                finding.url,
+            )
+        console.print(table)
+        return
+
     if json_body:
         spec = RequestSpec(method="JSON", url=url, json_body=json.loads(json_body))
     elif data:
