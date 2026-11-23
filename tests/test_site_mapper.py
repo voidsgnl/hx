@@ -34,25 +34,13 @@ def test_page_key_deduplicates_values_but_preserves_parameter_names():
 
 
 def test_mapping_request_filter_skips_passive_assets_and_third_party_hosts():
-    base = "https://example.test/"
-    assert not _mapping_request_allowed(
-        "https://example.test/photo.webp", "image", base
-    )
-    assert not _mapping_request_allowed(
-        "https://example.test/site.woff2", "font", base
-    )
-    assert not _mapping_request_allowed(
-        "https://example.test/video.mp4", "media", base
-    )
-    assert _mapping_request_allowed(
-        "https://example.test/app.js", "script", base
-    )
-    assert _mapping_request_allowed(
-        "https://example.test/api/search?q=x", "fetch", base
-    )
-    assert not _mapping_request_allowed(
-        "https://analytics.example-cdn.test/collect.js", "script", base
-    )
+    assert not _mapping_request_allowed("image")
+    assert not _mapping_request_allowed("font")
+    assert not _mapping_request_allowed("media")
+    assert _mapping_request_allowed("script")
+    assert _mapping_request_allowed("stylesheet")
+    assert _mapping_request_allowed("document")
+    assert _mapping_request_allowed("fetch")
 
 
 def test_framework_navigation_requests_are_not_application_api_surfaces():
