@@ -324,9 +324,13 @@ async def test_active_api_replays_click_trigger_and_rotating_csrf_headers():
     )
     assert result.site_map.interactions_attempted >= 1, result.to_dict()
     endpoint = next(
-        item for item in result.site_map.endpoints
-        if item.url.endswith("/api/interactive-xss")
+        (
+            item for item in result.site_map.endpoints
+            if item.url.endswith("/api/interactive-xss")
+        ),
+        None,
     )
+    assert endpoint is not None, result.to_dict()
     assert endpoint.trigger["name"] == "Load profile"
     assert any(
         finding.param == "/profile/bio"
