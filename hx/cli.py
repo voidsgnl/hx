@@ -17,7 +17,7 @@ from hx.site_mapper import map_site
 from hx.website_scan import scan_website
 from urllib.parse import urlparse
 
-app = typer.Typer(add_completion=False, help="Execution-oracle XSS scanner.")
+app = typer.Typer(add_completion=False, help="Website vulnerability scanner with browser-verified findings.")
 console = Console()
 
 
