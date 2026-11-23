@@ -90,6 +90,11 @@ def scan_cmd(
         if result.site_map.errors:
             for error in result.site_map.errors:
                 console.print(f"[yellow]Mapping note: {error}[/yellow]")
+        for engine_result in result.engine_results:
+            for error in engine_result.get("errors", []):
+                console.print(
+                    f"[yellow]{engine_result.get('engine')} note: {error}[/yellow]"
+                )
         if result.engines_run:
             console.print(f"[dim]engines executed: {', '.join(sorted(set(result.engines_run)))}[/dim]")
         if result.site_map.groups:
