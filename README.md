@@ -24,6 +24,22 @@ The scan pipeline has three main stages:
 3. **Browser execution oracle** — opens the candidate in Chromium and checks
    for execution evidence associated with that payload's unique ID.
 
+Website mode uses a separate discovery and planning path before invoking
+vulnerability engines:
+
+1. **Website mapper** — follows same-origin pages and JavaScript-driven routes,
+   records forms, and observes same-origin fetch/XHR endpoints.
+2. **Behaviour analysis** — groups pages into surfaces such as authentication,
+   search, user content, file handling, and general form workflows.
+3. **Engine registry** — selects independent vulnerability engines for each
+   discovered input surface.
+4. **Verification** — each engine applies its own evidence requirements. The
+   currently implemented website engine is XSS, which uses the Chromium
+   execution oracle described below.
+
+This structure lets hx add vulnerability classes without coupling their
+payloads or verification rules to the crawler.
+
 The distinction matters:
 
 | Result | Meaning |
