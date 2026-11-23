@@ -23,6 +23,12 @@ The scan pipeline has three main stages:
    that context.
 3. **Browser execution oracle** — opens the candidate in Chromium and checks
    for execution evidence associated with that payload's unique ID.
+4. **Differential control** — when an active payload executes, hx repeats the
+   same injection shape with only the proof callback replaced by a benign
+   no-op. A finding is marked `proven_execution` only when the active probe
+   executes and the control does not. If the request budget prevents the
+   control from running, the result is retained as
+   `executed_without_control`, not silently promoted to differential proof.
 
 Website mode uses a separate discovery and planning path before invoking
 vulnerability engines:
@@ -45,7 +51,8 @@ The distinction matters:
 | Result | Meaning |
 | --- | --- |
 | Reflection | The application returned or rendered the marker. This is not proof of XSS. |
-| Proven finding | Chromium observed the expected proof event for the payload being tested. |
+| Differentially proven finding | The active payload produced its exact proof event; the paired benign control did not. |
+| Executed without control | The active payload executed, but the paired control could not complete (for example, because the request budget was exhausted). |
 
 For GET URLs, hx also checks query parameters embedded in client-side URL
 fragments (for example, `/#/search?q=test`). Fragments are inspected in the
@@ -59,6 +66,7 @@ browser because browsers do not send them to the server in HTTP requests.
 - Context-aware payload selection.
 - Chromium-based JavaScript execution verification.
 - Unique payload IDs to associate proof events with individual probes.
+- Differential A/B verification using a syntax-preserving benign control payload.
 - Per-scan outbound request budget and jittered pacing.
 - Optional proxy support.
 - Headless mode by default, with an optional visible browser.
@@ -308,8 +316,9 @@ The scan JSON includes:
 - `requests_used` and `budget_exhausted`
 - Browser/HTTP fingerprint comparison
 - `reflections` — reflected marker candidates
-- `findings` — browser-proven findings, including context, payload ID and
-  execution-hit evidence
+- `findings` — browser-proven findings, including context, payload ID,
+  confidence tier, active execution-hit evidence, and benign-control evidence
+  when the control completed
 
 A scan can return reflections and still have an empty `findings` list. That
 means hx saw the input reflected but did not prove JavaScript execution.
