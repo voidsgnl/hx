@@ -370,9 +370,7 @@ async def map_site(
                 request_guard=pacer.reserve,
                 headless=headless,
                 navigation_guard=lambda destination: _is_in_scope(destination, normalized_base),
-                request_filter=lambda request: _mapping_request_allowed(
-                    request.resource_type
-                ),
+                request_filter=_mapping_request_allowed,
                 storage_state=storage_state,
             )
         else:
