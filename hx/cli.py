@@ -75,6 +75,13 @@ def scan_cmd(
             f"[dim]POST forms mapped but not submitted: {result.skipped_post_forms} | "
             f"POST API endpoints mapped but not tested: {result.skipped_post_endpoints}[/dim]"
         )
+        if result.mapping_budget_exhausted:
+            console.print("[yellow]Discovery request allowance reached; testing continued with the reserved budget.[/yellow]")
+        if result.site_map.errors:
+            for error in result.site_map.errors:
+                console.print(f"[yellow]Mapping note: {error}[/yellow]")
+        if result.engines_run:
+            console.print(f"[dim]engines executed: {', '.join(sorted(set(result.engines_run)))}[/dim]")
         if result.site_map.groups:
             group_table = Table(title="Discovered behaviour groups")
             group_table.add_column("behaviour")
@@ -83,7 +90,10 @@ def scan_cmd(
                 group_table.add_row(group.name, str(len(group.pages)))
             console.print(group_table)
         if not result.findings:
-            console.print("[yellow]no proven XSS on the tested GET inputs[/yellow]")
+            if not result.tested_targets:
+                console.print("[yellow]no testable GET input surfaces were discovered[/yellow]")
+            else:
+                console.print("[yellow]no proven XSS on the tested GET inputs[/yellow]")
             return
         table = Table(title="Website scan — proven XSS", show_lines=True)
         table.add_column("param")
