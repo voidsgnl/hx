@@ -106,15 +106,14 @@ class TargetClient:
                     }
                     serialized = json.dumps(local_storage)
                     await self._context.add_init_script(
-                        """(stores) => {
+                        f"""(() => {{
+                          const stores = {serialized};
                           const entries = stores[location.origin] || [];
-                          for (const item of entries) {
-                            try { localStorage.setItem(item.name, item.value); }
-                            catch (_) {}
-                          }
-                        }""".replace(
-                            "(stores) => {", f"(stores) => {{ const stores = {serialized};"
-                        )
+                          for (const item of entries) {{
+                            try {{ localStorage.setItem(item.name, item.value); }}
+                            catch (_) {{}}
+                          }}
+                        }})();"""
                     )
 
             # Install stealth + oracle BEFORE any navigation.
