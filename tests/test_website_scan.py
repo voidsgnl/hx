@@ -1,3 +1,5 @@
+import json
+
 import pytest
 
 from hx.site_mapper import SiteMapResult, DiscoveredPage
@@ -101,4 +103,35 @@ async def test_website_scan_maps_and_tests_get_form_inputs(monkeypatch):
     assert result.requests_used <= 100
     assert starts == 1
     assert closes == 1
+    assert any(finding.param == "q" for finding in result.findings)
+
+
+@pytest.mark.asyncio
+async def test_website_scan_active_post_preserves_authenticated_session_and_csrf(tmp_path):
+    state_path = tmp_path / "authenticated-state.json"
+    state_path.write_text(json.dumps({
+        "cookies": [{
+            "name": "hx_auth",
+            "value": "valid",
+            "domain": "localhost",
+            "path": "/",
+            "expires": -1,
+            "httpOnly": False,
+            "secure": False,
+            "sameSite": "Lax",
+        }],
+        "origins": [],
+    }), encoding="utf-8")
+
+    result = await scan_website(
+        "http://localhost:5000/auth-form-page",
+        budget=100,
+        max_pages=3,
+        max_depth=0,
+        active_post=True,
+        storage_state=str(state_path),
+    )
+    assert result.post_forms_tested == 1
+    assert result.skipped_post_forms == 0
+    assert result.tested_targets
     assert any(finding.param == "q" for finding in result.findings)
