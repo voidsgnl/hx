@@ -9,7 +9,7 @@ from hx.client import TargetClient
 from hx.oracle import (
     probe, probe_post_form, probe_post_json, probe_post_form_from_page,
     submit_form_from_page, ORACLE_INIT_JS,
-    ProbeResult, make_payload_id, refresh_api_headers,
+    ProbeResult, make_payload_id, refresh_api_headers, submit_json_from_page,
 )
 from hx.fastpath import FastPath, Candidate
 from hx.pacer import Pacer, BudgetExhausted
@@ -276,6 +276,16 @@ async def scan(target: str | RequestSpec, *, proxy: str | None = None,
                 body = fp.fetch_body_post_form(
                     probe_spec.url, probe_spec.form or {}, cookies
                 ) if c else ""
+            elif probe_spec.method == "JSON" and spec.source_page:
+                body = await submit_json_from_page(
+                    client.page, probe_spec.url, probe_spec.json_body or {},
+                    headers=probe_spec.headers,
+                )
+                offset = body.find(marker)
+                c = Candidate(
+                    url=probe_spec.url, marker=marker, offset=offset,
+                    status=200, param=param,
+                ) if offset >= 0 else None
             else:
                 c = fp.find_reflection_post_json(
                     probe_spec.url, probe_spec.json_body or {}, marker, cookies,
