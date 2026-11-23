@@ -4,6 +4,7 @@ The context routes every network request through a shared budget guard so
 navigation, redirects, and subresources are counted individually.
 """
 import asyncio
+import json
 import shutil
 import tempfile
 from pathlib import Path
@@ -42,7 +43,8 @@ class TargetClient:
         self.budget_exhausted = False
 
     async def start(self, oracle_init_script: str, request_guard=None,
-                    headless: bool = True, navigation_guard=None):
+                    headless: bool = True, navigation_guard=None,
+                    storage_state: str | None = None):
         self.request_guard = request_guard
         if self.profile_dir is None:
             self.profile_dir = tempfile.mkdtemp(prefix="hx-profile-")
@@ -85,6 +87,36 @@ class TargetClient:
     
                 await self._context.route("**/*", guard_route)
     
+            # Restore an explicitly supplied Playwright storage state before
+            # the first page is opened. Cookie and localStorage state stay local.
+            if storage_state:
+                state_path = Path(storage_state).expanduser()
+                state = json.loads(state_path.read_text(encoding="utf-8"))
+                if not isinstance(state, dict):
+                    raise ValueError("storage state must be a Playwright JSON object")
+                cookies = state.get("cookies", [])
+                if cookies:
+                    await self._context.add_cookies(cookies)
+                origins = state.get("origins", [])
+                if origins:
+                    local_storage = {
+                        item.get("origin", ""): item.get("localStorage", [])
+                        for item in origins
+                        if item.get("origin")
+                    }
+                    serialized = json.dumps(local_storage)
+                    await self._context.add_init_script(
+                        """(stores) => {
+                          const entries = stores[location.origin] || [];
+                          for (const item of entries) {
+                            try { localStorage.setItem(item.name, item.value); }
+                            catch (_) {}
+                          }
+                        }""".replace(
+                            "(stores) => {", f"(stores) => {{ const stores = {serialized};"
+                        )
+                    )
+
             # Install stealth + oracle BEFORE any navigation.
             await self._context.add_init_script(STEALTH_JS)
             await self._context.add_init_script(oracle_init_script)
@@ -135,6 +167,14 @@ class TargetClient:
     async def cookies(self) -> list[dict]:
         assert self._context
         return await self._context.cookies()
+
+    async def save_storage_state(self, path: str) -> None:
+        """Save cookies and localStorage for an explicitly authenticated session."""
+        assert self._context
+        destination = Path(path).expanduser()
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        await self._context.storage_state(path=str(destination))
+        destination.chmod(0o600)
 
     async def close(self):
         """Close Chromium and remove only profiles created by this client."""
