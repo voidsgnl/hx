@@ -45,3 +45,35 @@ async def test_client_restores_cookie_and_local_storage(tmp_path):
         assert "authentication required" not in await client.page.content()
     finally:
         await client.close()
+
+
+@pytest.mark.asyncio
+async def test_request_spec_cookie_overrides_storage_state_cookie(tmp_path):
+    state_path = tmp_path / "storage-state.json"
+    state_path.write_text(json.dumps({
+        "cookies": [{
+            "name": "hx_auth",
+            "value": "from-storage-state",
+            "domain": "localhost",
+            "path": "/",
+            "expires": -1,
+            "httpOnly": False,
+            "secure": False,
+            "sameSite": "Lax",
+        }],
+        "origins": [],
+    }), encoding="utf-8")
+
+    client = TargetClient(BASE)
+    await client.start(
+        oracle_init_script=ORACLE_INIT_JS,
+        storage_state=str(state_path),
+        cookies={"hx_auth": "from-request-spec"},
+    )
+    try:
+        cookies = await client._context.cookies(BASE)
+        assert {item["name"]: item["value"] for item in cookies}["hx_auth"] == (
+            "from-request-spec"
+        )
+    finally:
+        await client.close()

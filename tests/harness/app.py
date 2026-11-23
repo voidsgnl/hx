@@ -37,6 +37,22 @@ def reflect():
     # unescaped reflection into HTML body — classic reflected XSS
     return f"<html><body><div id='out'>{q}</div></body></html>"
 
+
+@app.route("/authed-reflect")
+def authed_reflect():
+    if request.headers.get("X-Test-Auth") != "secret":
+        return "unauthorized", 401
+    q = request.args.get("q", "")
+    return f"<html><body><div>{q}</div></body></html>"
+
+
+@app.route("/authed-cookie-reflect")
+def authed_cookie_reflect():
+    if request.cookies.get("X-Test-Auth") != "secret":
+        return "unauthorized", 401
+    q = request.args.get("q", "")
+    return f"<html><body><div>{q}</div></body></html>"
+
 @app.route("/dom")
 def dom():
     q = request.args.get("q", "")

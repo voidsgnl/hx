@@ -1,5 +1,5 @@
 """Orchestration: reflection discovery -> browser-confirmed execution."""
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from urllib.parse import urlencode, urlparse, parse_qs, urlunparse
 import hashlib
 import copy
@@ -55,10 +55,11 @@ class RequestSpec:
     form: dict[str, str] | None = None
     json_body: dict | None = None
     form_page: str | None = None
-    headers: dict[str, str] | None = None
     parameters: tuple[str, ...] | None = None
     source_page: str | None = None
     source_interaction: list[dict] | None = None
+    headers: dict[str, str] = field(default_factory=dict)
+    cookies: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -168,23 +169,43 @@ def _set_json_pointer(document: dict, pointer: str, value):
 
 def _apply_marker(spec: RequestSpec, param: str, value: str) -> RequestSpec:
     if spec.method == "GET":
-        return RequestSpec(method="GET", url=_with_param(spec.url, param, value))
+        return replace(spec, url=_with_param(spec.url, param, value))
     if spec.method == "POST":
         form = dict(spec.form or {})
         form[param] = value
-        return RequestSpec(
-            method="POST", url=spec.url, form=form, form_page=spec.form_page
-        )
+        return replace(spec, form=form)
     if spec.method == "JSON":
         body = copy.deepcopy(spec.json_body or {})
         _set_json_pointer(body, param, value)
-        return RequestSpec(
-            method="JSON", url=spec.url, json_body=body,
-            headers=spec.headers, parameters=spec.parameters,
-            source_page=spec.source_page,
-            source_interaction=spec.source_interaction,
-        )
+        return replace(spec, json_body=body)
     raise ValueError(f"unknown method {spec.method}")
+
+
+def _normalize_request_state(spec: RequestSpec) -> RequestSpec:
+    """Move any explicit Cookie header into the shared cookie source."""
+    headers = dict(spec.headers or {})
+    cookies = dict(spec.cookies or {})
+    header_cookies: dict[str, str] = {}
+    for key in list(headers):
+        if key.lower() != "cookie":
+            continue
+        raw = headers.pop(key)
+        for pair in raw.split(";"):
+            name, separator, value = pair.strip().partition("=")
+            if not separator or not name.strip():
+                raise ValueError("malformed Cookie header; expected name=value pairs")
+            header_cookies[name.strip()] = value.strip()
+    conflicts = header_cookies.keys() & cookies.keys()
+    if conflicts:
+        log.debug(
+            "RequestSpec.cookies override Cookie header values for: %s",
+            ", ".join(sorted(conflicts)),
+        )
+    return replace(
+        spec,
+        headers=headers,
+        cookies={**header_cookies, **cookies},
+    )
 
 
 async def _run_probe(
@@ -235,6 +256,7 @@ async def scan(target: str | RequestSpec, *, proxy: str | None = None,
                _warm: bool = True,
                storage_state: str | None = None) -> ScanResult:
     spec = target if isinstance(target, RequestSpec) else RequestSpec(method="GET", url=target)
+    spec = _normalize_request_state(spec)
     parsed = urlparse(spec.url)
     origin = f"{parsed.scheme}://{parsed.netloc}"
     if spec.method == "GET":
@@ -254,11 +276,14 @@ async def scan(target: str | RequestSpec, *, proxy: str | None = None,
     pacer = _pacer or Pacer(budget=budget)
     owns_client = _client is None
     client = _client or TargetClient(origin, proxy=proxy)
+    browser_headers = (
+        {} if spec.method == "JSON" and spec.source_page else spec.headers
+    )
     client.request_guard = pacer.reserve
     unaccounted_start = client.requests_unaccounted
     request_start = pacer.used
     def record_blocked(status: int, method: str, url: str) -> None:
-        if status not in (403, 429) and status < 500:
+        if status not in (401, 403, 429) and status < 500:
             return
         path = urlparse(url).path or "/"
         detail = f"{method} {path} -> {status}"
@@ -271,7 +296,11 @@ async def scan(target: str | RequestSpec, *, proxy: str | None = None,
             request_guard=client.request_guard,
             headless=headless,
             storage_state=storage_state,
+            headers=browser_headers,
+            cookies=spec.cookies,
         )
+    else:
+        await client.configure_request_state(browser_headers, spec.cookies)
     try:
         if _warm:
             await pacer.pause()
@@ -302,6 +331,9 @@ async def scan(target: str | RequestSpec, *, proxy: str | None = None,
         for param in params:
             marker = _marker_for(param)
             if spec.method == "JSON" and spec.source_page:
+                # These headers belong to the replayed API call, not the page
+                # navigation. Refresh them from the live source-page request.
+                await client.configure_request_state({}, spec.cookies)
                 refreshed = await refresh_api_headers(
                     client.page, spec.source_page, spec.url,
                     interaction=spec.source_interaction,
@@ -312,8 +344,16 @@ async def scan(target: str | RequestSpec, *, proxy: str | None = None,
             probe_spec = _apply_marker(spec, param, marker)
             await pacer.pause()
             if probe_spec.method == "GET":
-                c = fp.find_reflection(probe_spec.url, marker, cookies)
-                body = fp.fetch_body(probe_spec.url, cookies) if c else ""
+                c = fp.find_reflection(
+                    probe_spec.url, marker, cookies,
+                    headers=probe_spec.headers,
+                    spec_cookies=probe_spec.cookies,
+                )
+                body = fp.fetch_body(
+                    probe_spec.url, cookies,
+                    headers=probe_spec.headers,
+                    spec_cookies=probe_spec.cookies,
+                ) if c else ""
             elif probe_spec.method == "POST" and spec.form_page:
                 body = await submit_form_from_page(
                     client.page, spec.form_page, probe_spec.url, param, marker
@@ -327,10 +367,14 @@ async def scan(target: str | RequestSpec, *, proxy: str | None = None,
                 ) if offset >= 0 else None
             elif probe_spec.method == "POST":
                 c = fp.find_reflection_post_form(
-                    probe_spec.url, probe_spec.form or {}, marker, cookies
+                    probe_spec.url, probe_spec.form or {}, marker, cookies,
+                    headers=probe_spec.headers,
+                    spec_cookies=probe_spec.cookies,
                 )
                 body = fp.fetch_body_post_form(
-                    probe_spec.url, probe_spec.form or {}, cookies
+                    probe_spec.url, probe_spec.form or {}, cookies,
+                    headers=probe_spec.headers,
+                    spec_cookies=probe_spec.cookies,
                 ) if c else ""
             elif probe_spec.method == "JSON" and spec.source_page:
                 body = await submit_json_from_page(
@@ -346,10 +390,12 @@ async def scan(target: str | RequestSpec, *, proxy: str | None = None,
                 c = fp.find_reflection_post_json(
                     probe_spec.url, probe_spec.json_body or {}, marker, cookies,
                     headers=probe_spec.headers,
+                    spec_cookies=probe_spec.cookies,
                 )
                 body = fp.fetch_body_post_json(
                     probe_spec.url, probe_spec.json_body or {}, cookies,
                     headers=probe_spec.headers,
+                    spec_cookies=probe_spec.cookies,
                 ) if c else ""
             if fp.last_status is not None:
                 record_blocked(

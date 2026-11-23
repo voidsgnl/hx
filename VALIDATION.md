@@ -120,3 +120,47 @@ Run on 2026-11-22 against the locally hosted Juice Shop at `localhost:3000`.
   both a normal shared-client scan reports zero and a deliberately
   guard-disabled request during a scan is reported as nonzero.
 
+### Authenticated request-state regression (2026-11-23)
+
+- Added `/authed-reflect`, which returns an unescaped reflection only when
+  `X-Test-Auth: secret` is present, and `/authed-cookie-reflect` for the
+  equivalent cookie check.
+- Before the implementation change, the authenticated-header test failed:
+
+  ```text
+  tests/test_auth_request_spec.py::test_authed_scan_proves_end_to_end FAILED
+  tests/test_auth_request_spec.py::test_authed_scan_without_header_does_not_prove PASSED
+  AssertionError: assert 0 == 1
+  ScanResult(... reached_app=True, reflections=[], findings=[], requests_used=2,
+             coverage.params_tested=1, coverage.reflections=0 ...)
+  1 failed, 1 passed in 11.34s
+  ```
+
+  The harness returned 401 and FastPath found no reflection, so the browser
+  oracle was never reached. On this exact baseline both consumers omitted
+  `RequestSpec.headers`; this demonstrated the request-state false-negative
+  class but did not isolate a browser-only divergence.
+- `RequestSpec.headers` and `RequestSpec.cookies` are now the shared request
+  state. `_apply_marker()` copies the full spec, FastPath receives both on
+  GET and POST requests, and the browser context installs headers and cookies
+  before its first navigation. `storage_state` is still loaded; an explicit
+  spec cookie replaces a conflicting state cookie and logs at debug level.
+  The FastPath merges explicit cookies over browser cookies and recalculates
+  cookie scope at each redirect. Header values are also withheld on
+  third-party redirects.
+- curl_cffi treats a bare cookie mapping for `localhost` as `localhost.local`
+  in this environment. FastPath now binds those cookies to the actual
+  `localhost` host; this was verified against the cookie-authenticated harness
+  endpoint.
+- The CLI accepts repeatable `--header` / `-H` and `--cookie` options in
+  target mode. `--cookie` values override same-name cookies from a `Cookie`
+  header, and malformed values raise `BadParameter`. The no-header control
+  reports the 401 in coverage instead of presenting it as a clean scan.
+- After the fix, the header and cookie end-to-end scans both produced
+  browser-proven findings; the no-header control produced no finding and
+  recorded `GET /authed-reflect -> 401`.
+- Full suite after these changes: `129 passed, 2 skipped in 335.09s`.
+- The CLI now accepts a DVWA session via `--cookie` or `--header`, removing
+  the tool-side auth-input gap. DVWA itself was not available on the local
+  ports checked earlier, so access and proof against DVWA remain unvalidated.
+

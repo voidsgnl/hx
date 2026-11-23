@@ -1,6 +1,7 @@
 """hx — execution-oracle XSS scanner with browser WAF pass."""
 import asyncio
 import json
+import logging
 import random
 from dataclasses import asdict
 from importlib.resources import files
@@ -20,6 +21,63 @@ from urllib.parse import urlparse
 
 app = typer.Typer(add_completion=False, help="Website vulnerability scanner with browser-verified findings.")
 console = Console()
+log = logging.getLogger("hx")
+
+
+def _parse_cookie_pair(raw: str) -> tuple[str, str]:
+    name, separator, value = raw.partition("=")
+    name = name.strip()
+    value = value.strip()
+    if (
+        not separator
+        or not name
+        or any(char.isspace() or char in "=;" for char in name)
+        or any(char in "\r\n;" for char in value)
+    ):
+        raise typer.BadParameter("malformed cookie; expected name=value")
+    return name, value
+
+
+def _parse_request_state(
+    header_values: list[str] | None,
+    cookie_values: list[str] | None,
+) -> tuple[dict[str, str], dict[str, str]]:
+    headers: dict[str, str] = {}
+    header_cookies: dict[str, str] = {}
+    for raw in header_values or []:
+        name, separator, value = raw.partition(":")
+        name = name.strip()
+        value = value.strip()
+        if (
+            not separator
+            or not name
+            or any(char.isspace() or char == ":" for char in name)
+            or any(char in "\r\n" for char in value)
+        ):
+            raise typer.BadParameter("malformed header; expected 'Name: Value'")
+        if name.lower() == "cookie":
+            for pair in value.split(";"):
+                if not pair.strip():
+                    continue
+                cookie_name, cookie_value = _parse_cookie_pair(pair)
+                header_cookies[cookie_name] = cookie_value
+            continue
+        for existing in list(headers):
+            if existing.lower() == name.lower():
+                del headers[existing]
+        headers[name] = value
+
+    explicit_cookies: dict[str, str] = {}
+    for raw in cookie_values or []:
+        name, value = _parse_cookie_pair(raw)
+        explicit_cookies[name] = value
+    conflicts = header_cookies.keys() & explicit_cookies.keys()
+    if conflicts:
+        log.debug(
+            "--cookie values override Cookie header values for: %s",
+            ", ".join(sorted(conflicts)),
+        )
+    return headers, {**header_cookies, **explicit_cookies}
 
 
 def _random_banner() -> str:
@@ -64,10 +122,13 @@ def scan_cmd(
     active_api: bool = typer.Option(False, "--active-api", help="Opt in to replaying discovered JSON POST APIs with captured auth and CSRF headers"),
     include_auth_forms: bool = typer.Option(False, "--include-auth-forms", help="Also test authentication forms; may trigger lockouts or alter login state"),
     storage_state: Optional[str] = typer.Option(None, "--storage-state", help="Playwright storage-state JSON for an authenticated session"),
+    header: list[str] | None = typer.Option(None, "--header", "-H", help="Header 'Name: Value'. Repeatable. Applied to both paths."),
+    cookie: list[str] | None = typer.Option(None, "--cookie", help="Cookie 'name=value'. Repeatable. Shorthand for a Cookie header."),
 ):
     """Scan an explicit input or automatically map and scan a website."""
     if data and json_body:
         raise typer.BadParameter("--data and --json-body are mutually exclusive")
+    request_headers, request_cookies = _parse_request_state(header, cookie)
     mode = mode.lower()
     if mode not in {"auto", "target", "website"}:
         raise typer.BadParameter("--mode must be auto, target, or website")
@@ -78,12 +139,14 @@ def scan_cmd(
     selected_mode = mode
     if selected_mode == "auto":
         selected_mode = (
-            "target" if data or json_body or parsed_target.query or has_fragment_input
+            "target" if data or json_body or parsed_target.query or has_fragment_input or header or cookie
             else "website"
         )
     if (active_post or active_api) and selected_mode != "website":
         raise typer.BadParameter("--active-post and --active-api are only available in website mode")
     if selected_mode == "website":
+        if header or cookie:
+            raise typer.BadParameter("--header and --cookie are only available in target mode")
         if data or json_body:
             raise typer.BadParameter("--data and --json-body are only valid in target mode")
         result = asyncio.run(scan_website(
@@ -170,16 +233,25 @@ def scan_cmd(
         return
 
     if json_body:
-        spec = RequestSpec(method="JSON", url=url, json_body=json.loads(json_body))
+        spec = RequestSpec(
+            method="JSON", url=url, json_body=json.loads(json_body),
+            headers=request_headers, cookies=request_cookies,
+        )
     elif data:
         form = dict(
             pair.split("=", 1)
             for pair in data.split("&")
             if "=" in pair
         )
-        spec = RequestSpec(method="POST", url=url, form=form)
+        spec = RequestSpec(
+            method="POST", url=url, form=form,
+            headers=request_headers, cookies=request_cookies,
+        )
     else:
-        spec = RequestSpec(method="GET", url=url)
+        spec = RequestSpec(
+            method="GET", url=url,
+            headers=request_headers, cookies=request_cookies,
+        )
     res = asyncio.run(scan(
         spec, proxy=proxy, budget=budget, headless=not headed,
         storage_state=storage_state,

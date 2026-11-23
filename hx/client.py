@@ -5,9 +5,11 @@ navigation, redirects, and subresources are counted individually.
 """
 import asyncio
 import json
+import logging
 import shutil
 import tempfile
 from pathlib import Path
+from urllib.parse import urlparse
 from playwright.async_api import async_playwright, BrowserContext, Page
 from hx.pacer import BudgetExhausted
 
@@ -26,6 +28,7 @@ window.chrome = window.chrome || { runtime: {} };
 """
 
 CHALLENGE_MARKERS = ("Just a moment", "Verifying you are human", "cf-challenge")
+log = logging.getLogger("hx")
 
 
 class TargetClient:
@@ -42,10 +45,14 @@ class TargetClient:
         self.request_guard = None
         self.requests_unaccounted = 0
         self.budget_exhausted = False
+        self._request_headers: dict[str, str] = {}
+        self._target_host = (urlparse(self.origin).hostname or "").lower().rstrip(".")
 
     async def start(self, oracle_init_script: str, request_guard=None,
                     headless: bool = True, navigation_guard=None,
-                    storage_state: str | None = None):
+                    storage_state: str | None = None,
+                    headers: dict[str, str] | None = None,
+                    cookies: dict[str, str] | None = None):
         self.request_guard = request_guard
         if self.profile_dir is None:
             self.profile_dir = tempfile.mkdtemp(prefix="hx-profile-")
@@ -86,6 +93,13 @@ class TargetClient:
                             self.budget_exhausted = True
                             await route.abort(error_code="blockedbyclient")
                             return
+                request_host = (urlparse(request_url).hostname or "").lower().rstrip(".")
+                if request_host != self._target_host and self._request_headers:
+                    request_headers = await route.request.all_headers()
+                    for name in self._request_headers:
+                        request_headers.pop(name.lower(), None)
+                    await route.continue_(headers=request_headers)
+                    return
                 await route.continue_()
     
             await self._context.route("**/*", guard_route)
@@ -97,9 +111,9 @@ class TargetClient:
                 state = json.loads(state_path.read_text(encoding="utf-8"))
                 if not isinstance(state, dict):
                     raise ValueError("storage state must be a Playwright JSON object")
-                cookies = state.get("cookies", [])
-                if cookies:
-                    await self._context.add_cookies(cookies)
+                storage_cookies = state.get("cookies", [])
+                if storage_cookies:
+                    await self._context.add_cookies(storage_cookies)
                 origins = state.get("origins", [])
                 if origins:
                     local_storage = {
@@ -119,6 +133,8 @@ class TargetClient:
                         }})();"""
                     )
 
+            await self.configure_request_state(headers, cookies)
+
             # Install stealth + oracle BEFORE any navigation.
             await self._context.add_init_script(STEALTH_JS)
             await self._context.add_init_script(oracle_init_script)
@@ -126,6 +142,52 @@ class TargetClient:
         except BaseException:
             await self._cleanup_start_failure()
             raise
+
+    async def configure_request_state(
+        self,
+        headers: dict[str, str] | None = None,
+        cookies: dict[str, str] | None = None,
+    ) -> None:
+        """Install RequestSpec headers and cookies before the next navigation."""
+        if not self._context:
+            raise RuntimeError("TargetClient must be started before request state is set")
+        self._request_headers = dict(headers or {})
+        set_headers = getattr(self._context, "set_extra_http_headers", None)
+        if set_headers:
+            await set_headers(self._request_headers)
+
+        if not cookies:
+            return
+        target_cookies = dict(cookies)
+        existing = await self._context.cookies()
+        conflicting = []
+        for cookie in existing:
+            if cookie.get("name") not in target_cookies:
+                continue
+            domain = (cookie.get("domain") or "").lower().lstrip(".").rstrip(".")
+            if not domain:
+                cookie_url = urlparse(cookie.get("url", ""))
+                domain = (cookie_url.hostname or "").lower().rstrip(".")
+            if (
+                self._target_host == domain
+                or self._target_host.endswith("." + domain)
+            ):
+                conflicting.append(cookie)
+        for cookie in conflicting:
+            await self._context.clear_cookies(
+                name=cookie["name"],
+                domain=cookie.get("domain"),
+                path=cookie.get("path", "/"),
+            )
+        if conflicting:
+            log.debug(
+                "RequestSpec cookies override storage-state/browser cookies for: %s",
+                ", ".join(sorted({item["name"] for item in conflicting})),
+            )
+        await self._context.add_cookies([
+            {"name": name, "value": value, "url": self.origin + "/"}
+            for name, value in target_cookies.items()
+        ])
 
     async def _cleanup_start_failure(self):
         """Release partially initialized resources when startup fails."""

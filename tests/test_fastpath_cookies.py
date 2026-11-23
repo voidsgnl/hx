@@ -99,3 +99,37 @@ def test_redirect_recalculates_cookie_scope(monkeypatch):
         ("https://app.example.test/start", {"session": "secret"}),
         ("https://evil.test/landing", {}),
     ]
+
+
+def test_request_spec_state_wins_and_is_not_forwarded_off_domain(monkeypatch):
+    calls = []
+
+    class Response:
+        def __init__(self, status, location=None):
+            self.status_code = status
+            self.headers = {"Location": location} if location else {}
+
+    def fake_request(method, url, **kwargs):
+        calls.append((url, kwargs))
+        if url == "https://app.example.test/start":
+            return Response(302, "https://evil.test/landing")
+        return Response(200)
+
+    monkeypatch.setattr("hx.fastpath.cffi.request", fake_request)
+    fast = FastPath()
+    fast.set_allowed_domains({"app.example.test"})
+    fast._request(
+        "GET",
+        "https://app.example.test/start",
+        headers={"X-Test-Auth": "secret"},
+        browser_cookies=[cookie("session", "browser", "app.example.test")],
+        spec_cookies={"session": "spec", "extra": "cookie"},
+    )
+
+    assert calls[0][1]["headers"] == {"X-Test-Auth": "secret"}
+    assert calls[0][1]["cookies"] == {
+        "session": "spec",
+        "extra": "cookie",
+    }
+    assert "headers" not in calls[1][1]
+    assert calls[1][1]["cookies"] == {}

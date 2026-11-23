@@ -10,9 +10,13 @@ cookie is invalidated -> 403. Pin both to the same chrome version string.
 """
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import logging
 from urllib.parse import urljoin, urlparse
 from curl_cffi import requests as cffi
+from curl_cffi.requests.cookies import Cookies as CurlCookies
 from hx.versions import CURL_CFFI_IMPERSONATE
+
+log = logging.getLogger("hx")
 
 
 @dataclass
@@ -40,11 +44,40 @@ class FastPath:
     def _request(self, method: str, url: str, **kwargs):
         """Send requests one hop at a time so redirects consume budget too."""
         browser_cookies = kwargs.pop("browser_cookies", None)
-        request_kwargs = dict(kwargs)
+        spec_cookies = kwargs.pop("spec_cookies", None)
+        spec_headers = kwargs.pop("headers", None)
+        base_kwargs = dict(kwargs)
+        initial_host = (urlparse(url).hostname or "").lower().rstrip(".")
         for redirect_count in range(11):
             self._reserve_request()
-            if browser_cookies is not None:
-                request_kwargs["cookies"] = self._cookies(browser_cookies, url)
+            host = (urlparse(url).hostname or "").lower().rstrip(".")
+            allowed_host = host in self._allowed_domains if self._allowed_domains else host == initial_host
+            request_kwargs = dict(base_kwargs)
+            if spec_headers and allowed_host:
+                request_kwargs["headers"] = spec_headers
+
+            browser_jar = (
+                self._cookies(browser_cookies, url)
+                if browser_cookies is not None else {}
+            )
+            explicit_jar = spec_cookies if spec_cookies and allowed_host else {}
+            conflicts = browser_jar.keys() & explicit_jar.keys()
+            if conflicts:
+                log.debug(
+                    "RequestSpec cookies override browser cookies for: %s",
+                    ", ".join(sorted(conflicts)),
+                )
+            if browser_cookies is not None or spec_cookies is not None:
+                merged_cookies = {**browser_jar, **explicit_jar}
+                if host == "localhost" and merged_cookies:
+                    # curl-impersonate infers "localhost.local" for a bare
+                    # cookie dict; bind these to the actual loopback host.
+                    cookie_jar = CurlCookies()
+                    for name, value in merged_cookies.items():
+                        cookie_jar.set(name, value, domain=host)
+                    request_kwargs["cookies"] = cookie_jar
+                else:
+                    request_kwargs["cookies"] = merged_cookies
             response = cffi.request(
                 method, url, allow_redirects=False, **request_kwargs
             )
@@ -62,8 +95,8 @@ class FastPath:
                 response.status_code in (301, 302) and method.upper() == "POST"
             ):
                 method = "GET"
-                request_kwargs.pop("data", None)
-                request_kwargs.pop("json", None)
+                base_kwargs.pop("data", None)
+                base_kwargs.pop("json", None)
             url = next_url
         return response
 
@@ -147,12 +180,16 @@ class FastPath:
         )
         return response.status_code, response.headers.get("Location")
 
-    def fetch_body(self, url: str, browser_cookies: list[dict]) -> str:
+    def fetch_body(self, url: str, browser_cookies: list[dict], *,
+                   headers: dict[str, str] | None = None,
+                   spec_cookies: dict[str, str] | None = None) -> str:
         """Fetch a response body for context detection; never prove execution."""
         r = self._request("GET",
             url,
             impersonate=self.impersonate,
             browser_cookies=browser_cookies,
+            headers=headers,
+            spec_cookies=spec_cookies,
             proxies=self.proxies,
             http_version="v1",
             timeout=15,
@@ -161,12 +198,16 @@ class FastPath:
 
     def find_reflection_post_form(self, url: str, fields: dict[str, str],
                                   marker: str,
-                                  browser_cookies: list[dict]) -> Candidate | None:
+                                  browser_cookies: list[dict], *,
+                                  headers: dict[str, str] | None = None,
+                                  spec_cookies: dict[str, str] | None = None) -> Candidate | None:
         r = self._request("POST",
             url,
             data=fields,
+            headers=headers,
             impersonate=self.impersonate,
             browser_cookies=browser_cookies,
+            spec_cookies=spec_cookies,
             proxies=self.proxies,
             http_version="v1",
             timeout=15,
@@ -179,13 +220,15 @@ class FastPath:
     def find_reflection_post_json(self, url: str, body: dict,
                                   marker: str,
                                   browser_cookies: list[dict],
-                                  headers: dict[str, str] | None = None) -> Candidate | None:
+                                  headers: dict[str, str] | None = None,
+                                  spec_cookies: dict[str, str] | None = None) -> Candidate | None:
         r = self._request("POST",
             url,
             json=body,
             headers=headers,
             impersonate=self.impersonate,
             browser_cookies=browser_cookies,
+            spec_cookies=spec_cookies,
             proxies=self.proxies,
             http_version="v1",
             timeout=15,
@@ -196,12 +239,16 @@ class FastPath:
         return Candidate(url=url, marker=marker, offset=idx, status=r.status_code)
 
     def fetch_body_post_form(self, url: str, fields: dict[str, str],
-                             browser_cookies: list[dict]) -> str:
+                             browser_cookies: list[dict], *,
+                             headers: dict[str, str] | None = None,
+                             spec_cookies: dict[str, str] | None = None) -> str:
         r = self._request("POST",
             url,
             data=fields,
+            headers=headers,
             impersonate=self.impersonate,
             browser_cookies=browser_cookies,
+            spec_cookies=spec_cookies,
             proxies=self.proxies,
             http_version="v1",
             timeout=15,
@@ -210,13 +257,15 @@ class FastPath:
 
     def fetch_body_post_json(self, url: str, body: dict,
                              browser_cookies: list[dict],
-                             headers: dict[str, str] | None = None) -> str:
+                             headers: dict[str, str] | None = None,
+                             spec_cookies: dict[str, str] | None = None) -> str:
         r = self._request("POST",
             url,
             json=body,
             headers=headers,
             impersonate=self.impersonate,
             browser_cookies=browser_cookies,
+            spec_cookies=spec_cookies,
             proxies=self.proxies,
             http_version="v1",
             timeout=15,
@@ -224,12 +273,16 @@ class FastPath:
         return r.text or ""
 
     def find_reflection(self, url: str, marker: str,
-                        browser_cookies: list[dict]) -> Candidate | None:
+                        browser_cookies: list[dict], *,
+                        headers: dict[str, str] | None = None,
+                        spec_cookies: dict[str, str] | None = None) -> Candidate | None:
         """Return a Candidate if `marker` appears verbatim in the body, else None."""
         r = self._request("GET",
             url,
             impersonate=self.impersonate,
             browser_cookies=browser_cookies,
+            headers=headers,
+            spec_cookies=spec_cookies,
             proxies=self.proxies,
             http_version="v1",
             timeout=15,
