@@ -129,6 +129,7 @@ async def test_website_scan_active_post_preserves_authenticated_session_and_csrf
         max_pages=3,
         max_depth=0,
         active_post=True,
+        include_auth_forms=True,
         storage_state=str(state_path),
     )
     assert result.post_forms_tested == 1
