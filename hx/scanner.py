@@ -6,7 +6,8 @@ import logging
 
 from hx.client import TargetClient
 from hx.oracle import (
-    probe, probe_post_form, probe_post_json, ORACLE_INIT_JS,
+    probe, probe_post_form, probe_post_json, probe_post_form_from_page,
+    submit_form_from_page, ORACLE_INIT_JS,
     ProbeResult, make_payload_id,
 )
 from hx.fastpath import FastPath, Candidate
@@ -32,6 +33,7 @@ class RequestSpec:
     url: str = ""
     form: dict[str, str] | None = None
     json_body: dict | None = None
+    form_page: str | None = None
 
 
 @dataclass
@@ -104,7 +106,8 @@ async def scan(target: str | RequestSpec, *, proxy: str | None = None,
                budget: int = 120, headless: bool = True,
                _client: TargetClient | None = None,
                _pacer: Pacer | None = None,
-               _warm: bool = True) -> ScanResult:
+               _warm: bool = True,
+               storage_state: str | None = None) -> ScanResult:
     spec = target if isinstance(target, RequestSpec) else RequestSpec(method="GET", url=target)
     parsed = urlparse(spec.url)
     origin = f"{parsed.scheme}://{parsed.netloc}"
@@ -130,6 +133,7 @@ async def scan(target: str | RequestSpec, *, proxy: str | None = None,
             oracle_init_script=ORACLE_INIT_JS,
             request_guard=pacer.reserve,
             headless=headless,
+            storage_state=storage_state,
         )
     else:
         client.request_guard = pacer.reserve
@@ -167,6 +171,15 @@ async def scan(target: str | RequestSpec, *, proxy: str | None = None,
             if probe_spec.method == "GET":
                 c = fp.find_reflection(probe_spec.url, marker, cookies)
                 body = fp.fetch_body(probe_spec.url, cookies) if c else ""
+            elif probe_spec.method == "POST" and spec.form_page:
+                body = await submit_form_from_page(
+                    client.page, spec.form_page, probe_spec.url, param, marker
+                )
+                offset = body.find(marker)
+                c = Candidate(
+                    url=probe_spec.url, marker=marker, offset=offset,
+                    status=200, param=param,
+                ) if offset >= 0 else None
             elif probe_spec.method == "POST":
                 c = fp.find_reflection_post_form(
                     probe_spec.url, probe_spec.form or {}, marker, cookies
@@ -184,7 +197,10 @@ async def scan(target: str | RequestSpec, *, proxy: str | None = None,
             if c:
                 c.param = param
                 result.reflections.append(c)
-                candidates.append((param, c, body, "http"))
+                candidates.append((
+                    param, c, body,
+                    "browser-post-form" if probe_spec.method == "POST" and spec.form_page else "http",
+                ))
 
         # Fragment values are browser-only: browsers do not send fragments over HTTP.
         for param in fragment_params:
@@ -225,6 +241,15 @@ async def scan(target: str | RequestSpec, *, proxy: str | None = None,
                 if payload_spec.method == "GET":
                     pr = await probe(
                         client.page, payload_spec.url, payload,
+                        payload_id=payload_id,
+                    )
+                elif payload_spec.method == "POST" and spec.form_page:
+                    pr = await probe_post_form_from_page(
+                        client.page,
+                        spec.form_page,
+                        payload_spec.url,
+                        param,
+                        payload,
                         payload_id=payload_id,
                     )
                 elif payload_spec.method == "POST":
