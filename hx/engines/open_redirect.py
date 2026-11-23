@@ -41,12 +41,14 @@ class OpenRedirectResult:
     findings: list[OpenRedirectFinding] = field(default_factory=list)
     requests_used: int = 0
     budget_exhausted: bool = False
+    errors: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return {
             "target": self.target,
             "requests_used": self.requests_used,
             "budget_exhausted": self.budget_exhausted,
+            "errors": self.errors,
             "findings": [asdict(item) for item in self.findings],
         }
 
@@ -113,6 +115,8 @@ class OpenRedirectEngine:
                     ))
         except BudgetExhausted:
             result.budget_exhausted = True
+        except Exception as exc:
+            result.errors.append(f"{type(exc).__name__}: {str(exc)[:160]}")
         finally:
             result.requests_used = (
                 context.pacer.used - start_used if context.pacer else 0
