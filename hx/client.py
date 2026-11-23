@@ -45,11 +45,13 @@ class TargetClient:
         self.request_guard = None
         self.requests_unaccounted = 0
         self.budget_exhausted = False
+        self.last_response_status: int | None = None
         self._request_headers: dict[str, str] = {}
         self._target_host = (urlparse(self.origin).hostname or "").lower().rstrip(".")
 
     async def start(self, oracle_init_script: str, request_guard=None,
                     headless: bool = True, navigation_guard=None,
+                    request_filter=None,
                     storage_state: str | None = None,
                     headers: dict[str, str] | None = None,
                     cookies: dict[str, str] | None = None):
@@ -81,6 +83,11 @@ class TargetClient:
                 if (navigation_guard
                         and route.request.is_navigation_request()
                         and not navigation_guard(request_url)):
+                    await route.abort(error_code="blockedbyclient")
+                    return
+                # A mapper may reject non-essential subresources before they
+                # consume the scan's request budget.
+                if request_filter and not request_filter(route.request):
                     await route.abort(error_code="blockedbyclient")
                     return
                 if request_url.startswith(("http://", "https://")):
@@ -206,11 +213,16 @@ class TargetClient:
                     shutil.rmtree(self.profile_dir, ignore_errors=True)
                     self.profile_dir = None
 
-    async def warm(self, timeout_ms: int = 20000) -> bool:
-        """Hit origin, wait out JS challenge. True if we reached app content."""
+    async def warm(self, timeout_ms: int = 20000, url: str | None = None) -> bool:
+        """Navigate once to the requested target and wait out JS challenges."""
+        self.last_response_status = None
         try:
-            await self.page.goto(self.origin, wait_until="domcontentloaded",
-                                 timeout=timeout_ms)
+            response = await self.page.goto(
+                url or self.origin,
+                wait_until="domcontentloaded",
+                timeout=timeout_ms,
+            )
+            self.last_response_status = response.status if response else None
         except Exception:
             return False
         return await self._wait_past_challenge()
