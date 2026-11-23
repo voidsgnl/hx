@@ -29,6 +29,7 @@ class WebsiteScanResult:
     post_forms_tested: int = 0
     mapping_budget_exhausted: bool = False
     engines_run: list[str] = field(default_factory=list)
+    engine_results: list[dict] = field(default_factory=list)
     requests_used: int = 0
     budget_exhausted: bool = False
 
@@ -46,6 +47,7 @@ class WebsiteScanResult:
             "post_forms_tested": self.post_forms_tested,
             "mapping_budget_exhausted": self.mapping_budget_exhausted,
             "engines_run": sorted(set(self.engines_run)),
+            "engine_results": self.engine_results,
             "requests_used": self.requests_used,
             "budget_exhausted": self.budget_exhausted,
             "findings": [
@@ -337,6 +339,11 @@ async def scan_website(
                 result.engines_run.append(engine.engine_id)
                 if engine.engine_id == "xss":
                     result.scans.append(engine_result)
+                elif hasattr(engine_result, "to_dict"):
+                    result.engine_results.append({
+                        "engine": engine.engine_id,
+                        **engine_result.to_dict(),
+                    })
                 result.tested_targets.append(target)
                 remaining = max(0, remaining - engine_result.requests_used)
                 if engine_result.budget_exhausted:
