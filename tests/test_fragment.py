@@ -45,3 +45,17 @@ def test_preserves_plain_fragment_query_format():
         "https://example.test/#q=old&page=2", "q", "new"
     )
     assert urlparse(updated).fragment == "q=new&page=2"
+
+import pytest
+
+from hx.scanner import scan
+
+
+BASE = "http://localhost:5000"
+
+
+@pytest.mark.asyncio
+async def test_scanner_discovers_and_proves_hash_router_dom_xss():
+    result = await scan(f"{BASE}/hash-dom#/search?q=hello", budget=40)
+    assert any(item.param == "q" for item in result.reflections)
+    assert any(item.param == "q" for item in result.findings)
