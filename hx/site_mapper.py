@@ -242,6 +242,7 @@ async def map_site(
     _warm: bool = True,
     storage_state: str | None = None,
     interaction_limit: int = 3,
+    progress=None,
 ) -> SiteMapResult:
     """Map same-origin pages and a bounded set of safe, read-oriented controls."""
     parsed = urlsplit(base_url)
@@ -296,6 +297,8 @@ async def map_site(
             if key in pages_seen or not _is_in_scope(url, normalized_base):
                 continue
             pages_seen.add(key)
+            if progress:
+                progress(f"[cyan]Mapping[/cyan] {url} (depth {depth}, {pacer.used}/{pacer.budget} discovery requests)")
             page_endpoints: list[DiscoveredEndpoint] = []
 
             capture_tasks = set()
@@ -524,6 +527,8 @@ async def map_site(
                 forms=forms, behaviour=behaviour,
             ))
 
+            if progress:
+                progress(f"[green]Mapped[/green] {url}: {len(forms)} forms, {len(page_endpoints)} API endpoints, {len(links)} same-origin links")
             group = group_data.setdefault(behaviour, BehaviourGroup(name=behaviour))
             group.pages.append(url)
             for form in forms:
@@ -549,4 +554,6 @@ async def map_site(
             await client.close()
 
     result.groups = sorted(group_data.values(), key=lambda group: group.name)
+    if progress:
+        progress(f"[cyan]Discovery finished[/cyan]: {len(result.pages)} pages, {len(result.endpoints)} endpoints, {pacer.used}/{pacer.budget} requests")
     return result
