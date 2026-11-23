@@ -141,7 +141,7 @@ async def _run_probe(
     else:
         result = await probe_post_json(
             client.page, payload_spec.url, payload_spec.json_body or {},
-            payload_id=payload_id,
+            payload_id=payload_id, headers=payload_spec.headers,
         )
     return result, payload_spec.url
 
@@ -235,10 +235,12 @@ async def scan(target: str | RequestSpec, *, proxy: str | None = None,
                 ) if c else ""
             else:
                 c = fp.find_reflection_post_json(
-                    probe_spec.url, probe_spec.json_body or {}, marker, cookies
+                    probe_spec.url, probe_spec.json_body or {}, marker, cookies,
+                    headers=probe_spec.headers,
                 )
                 body = fp.fetch_body_post_json(
-                    probe_spec.url, probe_spec.json_body or {}, cookies
+                    probe_spec.url, probe_spec.json_body or {}, cookies,
+                    headers=probe_spec.headers,
                 ) if c else ""
             if c:
                 c.param = param
