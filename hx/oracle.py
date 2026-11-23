@@ -293,6 +293,7 @@ async def probe_post_json(
     body: dict,
     *,
     payload_id: str,
+    headers: dict[str, str] | None = None,
     settle: float = 1.8,
 ) -> ProbeResult:
     parsed = urlparse(action)
@@ -304,10 +305,11 @@ async def probe_post_json(
     await _prepare_probe(page)
     try:
         await page.evaluate(
-            """async ({action, body}) => {
+            """async ({action, body, headers}) => {
               const response = await fetch(action, {
                 method: "POST",
-                headers: {"Content-Type": "application/json"},
+                credentials: "same-origin",
+                headers: {"Content-Type": "application/json", ...headers},
                 body: JSON.stringify(body)
               });
               const text = await response.text();
@@ -315,7 +317,7 @@ async def probe_post_json(
               document.write(text);
               document.close();
             }""",
-            {"action": action, "body": body},
+            {"action": action, "body": body, "headers": headers or {}},
         )
     except Exception:
         pass
