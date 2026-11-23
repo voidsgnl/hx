@@ -193,7 +193,7 @@ def test_api_planner_preserves_json_body_and_auth_headers_but_skips_secrets():
     ))
     surfaces = _api_surfaces_from_map(site_map)
     assert len(surfaces) == 1
-    assert surfaces[0].parameters == ("message",)
+    assert surfaces[0].parameters == ("/message",)
     assert surfaces[0].request_body["csrf_token"] == "secret-token"
     assert surfaces[0].headers["authorization"] == "Bearer private"
     public = site_map.to_dict()["endpoints"][0]
@@ -220,9 +220,9 @@ async def test_website_scan_replays_authenticated_json_api_with_custom_csrf_head
     assert api_endpoint.headers.get("authorization") == "Bearer hx-api-secret"
     assert api_endpoint.headers.get("x-csrf-token") == "hx-api-csrf"
     assert result.scans and any(
-        candidate.param == "message" for candidate in result.scans[0].reflections
+        candidate.param == "/message" for candidate in result.scans[0].reflections
     ), result.to_dict()
-    assert any(finding.param == "message" for finding in result.findings), result.to_dict()
+    assert any(finding.param == "/message" for finding in result.findings), result.to_dict()
     assert result.findings[0].confidence == "proven_execution"
     public_endpoint = result.to_dict()["site_map"]["endpoints"][0]
     assert public_endpoint["headers"]["authorization"] == "<redacted>"
