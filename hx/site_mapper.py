@@ -242,8 +242,11 @@ async def map_site(
                         f"{url}: navigation ended outside the allowed origin"
                     )
                     continue
+                final_key = _page_key(final_url)
+                if final_key in pages_seen and final_key != key:
+                    continue
                 url = final_url
-                pages_seen.add(_page_key(final_url))
+                pages_seen.add(final_key)
                 try:
                     await client.page.wait_for_load_state("networkidle", timeout=1500)
                 except Exception:
