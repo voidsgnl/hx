@@ -36,8 +36,14 @@ Website mode uses a separate discovery and planning path before invoking
 vulnerability engines:
 
 1. **Website mapper** — follows same-origin pages and JavaScript-driven routes,
-   records forms, and observes same-origin fetch/XHR endpoints.
-2. **Behaviour analysis** — groups pages into surfaces such as authentication,
+   records forms, and observes same-origin fetch/XHR endpoints. It prioritizes
+   queued page navigation and reserves discovery requests for page coverage
+   before optional UI exploration.
+2. **Request classification** — separates application endpoints from framework
+   navigation traffic such as Next.js RSC (`?_rsc=`) requests. Framework
+   navigation is counted for visibility but is not sent to vulnerability engines;
+   application POST actions remain discoverable.
+3. **Behaviour analysis** — groups pages into surfaces such as authentication,
    search, user content, file handling, and general form workflows.
 3. **Engine registry** — selects independent vulnerability engines for each
    discovered input surface.
@@ -47,6 +53,11 @@ vulnerability engines:
 
 This structure lets hx add vulnerability classes without coupling their
 payloads or verification rules to the crawler.
+
+Website-scan coverage distinguishes successfully mapped pages, navigation
+attempts, failed pages, and pages still pending because of the page or request
+budget. The terminal summary also reports framework navigation requests that
+were excluded from application endpoint testing.
 
 The distinction matters:
 
