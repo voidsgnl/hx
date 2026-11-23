@@ -21,6 +21,7 @@ class Candidate:
     marker: str          # the unique string we searched for
     offset: int          # where it appeared in the body
     status: int
+    param: str = ""
 
 
 class FastPath:
@@ -71,8 +72,16 @@ class FastPath:
         domain = domain.lower().lstrip(".").rstrip(".")
         return host == domain or host.endswith("." + domain)
 
-    def _cookies(self, browser_cookies: list[dict], url: str) -> dict:
-        """Return only cookies valid for this request URL and target domain."""
+    def _cookies(self, browser_cookies: list[dict], url: str | None = None) -> dict:
+        """Return only cookies valid for this request URL and target domain.
+
+        The optional URL preserves the older inspection helper API; network
+        requests always pass their actual destination URL.
+        """
+        if url is None:
+            if not self._allowed_domains:
+                return {}
+            url = f"http://{sorted(self._allowed_domains)[0]}/"
         parsed = urlparse(url)
         host = (parsed.hostname or "").lower().rstrip(".")
         path = parsed.path or "/"
