@@ -146,6 +146,34 @@ def script_block():
 var x = 1; {q}
 </script></body></html>"""
 
+@app.route("/api-page")
+def api_page():
+    return """<!doctype html><html><body>
+<script>
+fetch("/api/xss", {
+  method: "POST",
+  headers: {
+    "Content-Type": "application/json",
+    "Authorization": "Bearer hx-api-secret",
+    "X-CSRF-Token": "hx-api-csrf"
+  },
+  body: JSON.stringify({message: "hello", token: "hx-api-csrf"})
+});
+</script>
+API client
+</body></html>"""
+
+
+@app.route("/api/xss", methods=["POST"])
+def api_xss():
+    if request.headers.get("Authorization") != "Bearer hx-api-secret":
+        return "authentication required", 401
+    if request.headers.get("X-CSRF-Token") != "hx-api-csrf":
+        return "csrf failed", 403
+    body = request.get_json(silent=True) or {}
+    return f"<html><body><div>{body.get('message', '')}</div></body></html>"
+
+
 @app.route("/post-reflect", methods=["POST"])
 def post_reflect():
     q = request.form.get("q", "")
