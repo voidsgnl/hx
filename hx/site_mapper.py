@@ -7,7 +7,8 @@ from __future__ import annotations
 
 from collections import deque
 from dataclasses import asdict, dataclass, field
-from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
+import json
+from urllib.parse import parse_qsl, parse_qs, urlencode, urljoin, urlsplit, urlunsplit
 
 from hx.client import TargetClient
 from hx.discover import discover_forms
@@ -22,6 +23,30 @@ class DiscoveredEndpoint:
     resource_type: str
     source_page: str
     query_parameters: list[str] = field(default_factory=list)
+    request_body: dict | None = None
+    headers: dict[str, str] = field(default_factory=dict)
+    content_type: str = ""
+
+    def public_dict(self) -> dict:
+        sensitive = {"authorization", "proxy-authorization", "cookie", "set-cookie"}
+        safe_headers = {
+            key: ("<redacted>" if key.lower() in sensitive else value)
+            for key, value in self.headers.items()
+        }
+        safe_body = {}
+        for key, value in (self.request_body or {}).items():
+            if any(word in key.lower() for word in ("password", "secret", "token", "key", "credential")):
+                safe_body[key] = "<redacted>"
+            else:
+                safe_body[key] = value
+        return {
+            "url": self.url, "method": self.method,
+            "resource_type": self.resource_type, "source_page": self.source_page,
+            "query_parameters": self.query_parameters,
+            "request_body": safe_body or None,
+            "headers": safe_headers, "content_type": self.content_type,
+            "body_parameters": sorted((self.request_body or {}).keys()),
+        }
 
 
 @dataclass
@@ -55,7 +80,9 @@ class SiteMapResult:
     errors: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:
-        return asdict(self)
+        data = asdict(self)
+        data['endpoints'] = [endpoint.public_dict() for endpoint in self.endpoints]
+        return data
 
 _ROUTE_CAPTURE_JS = """
 (() => {
@@ -224,7 +251,36 @@ async def map_site(
                 if request.resource_type not in ("xhr", "fetch"):
                     return
                 endpoint_key = (request.method.upper(), request_url)
+                raw_headers = {
+                    key.lower(): value for key, value in request.headers.items()
+                    if key.lower() in {
+                        "content-type", "authorization", "x-csrf-token",
+                        "x-xsrf-token", "x-requested-with", "accept",
+                    } or key.lower().startswith("x-")
+                }
+                raw_body = request.post_data
+                parsed_body = None
+                content_type = raw_headers.get("content-type", "")
+                if raw_body and "application/json" in content_type.lower():
+                    try:
+                        value = json.loads(raw_body)
+                        if isinstance(value, dict):
+                            parsed_body = value
+                    except (ValueError, TypeError):
+                        pass
+                elif raw_body and "application/x-www-form-urlencoded" in content_type.lower():
+                    parsed_body = {
+                        key: values[-1]
+                        for key, values in parse_qs(raw_body, keep_blank_values=True).items()
+                    }
                 if endpoint_key in endpoints_seen:
+                    existing = next(
+                        (item for item in result.endpoints
+                         if (item.method, item.url) == endpoint_key), None
+                    )
+                    if existing and parsed_body:
+                        existing.request_body = parsed_body
+                        existing.headers.update(raw_headers)
                     return
                 endpoints_seen.add(endpoint_key)
                 endpoint = DiscoveredEndpoint(
@@ -237,6 +293,9 @@ async def map_site(
                             urlsplit(request_url).query, keep_blank_values=True
                         )
                     }),
+                    request_body=parsed_body,
+                    headers=raw_headers,
+                    content_type=content_type,
                 )
                 result.endpoints.append(endpoint)
                 page_endpoints.append(endpoint)
