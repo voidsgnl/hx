@@ -64,6 +64,26 @@ def hash_dom():
 </script>
 </body></html>"""
 
+@app.route("/spa")
+def spa():
+    return """<!doctype html><html><body>
+<script>
+  fetch("/api/search?q=term");
+  history.pushState({}, "", "/search?q=from-spa");
+</script>
+</body></html>"""
+
+
+@app.route("/search")
+def search_page():
+    return "<html><body>search route</body></html>"
+
+
+@app.route("/api/search")
+def api_search():
+    return {"results": [], "q": request.args.get("q", "")}
+
+
 @app.route("/unrelated-alert")
 def unrelated_alert():
     # A page-level script execution must not be mistaken for probe execution.
