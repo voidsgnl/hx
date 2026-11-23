@@ -605,7 +605,8 @@ async def map_site(
                 if link_key not in pages_seen and link_key not in queued and depth < max_depth:
                     queued.add(link_key)
                     queue.append((absolute, depth + 1))
-                links.append(absolute)
+                if absolute not in links:
+                    links.append(absolute)
 
             query_names = sorted({
                 name for name, _ in parse_qsl(urlsplit(url).query, keep_blank_values=True)
