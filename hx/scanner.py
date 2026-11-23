@@ -12,7 +12,7 @@ from hx.oracle import (
 )
 from hx.fastpath import FastPath, Candidate
 from hx.pacer import Pacer, BudgetExhausted
-from hx.payloads import detect_context, payloads_for
+from hx.payloads import detect_context, payloads_for, control_payload_for
 from hx.fingerprint import check_fingerprint_match
 
 log = logging.getLogger("hx")
@@ -25,6 +25,8 @@ class Finding:
     payload: str
     probe: ProbeResult
     context: str = "unknown"
+    confidence: str = "proven_execution"
+    control_probe: ProbeResult | None = None
 
 
 @dataclass
@@ -102,6 +104,45 @@ def _apply_marker(spec: RequestSpec, param: str, value: str) -> RequestSpec:
         body[param] = value
         return RequestSpec(method="JSON", url=spec.url, json_body=body)
     raise ValueError(f"unknown method {spec.method}")
+
+
+async def _run_probe(
+    client: TargetClient,
+    spec: RequestSpec,
+    param: str,
+    payload: str,
+    payload_id: str,
+    source: str,
+) -> tuple[ProbeResult, str]:
+    """Run one payload through the browser oracle for its input transport."""
+    if source == "fragment":
+        payload_url = _with_fragment_param(spec.url, param, payload)
+        result = await probe(
+            client.page, payload_url, payload, payload_id=payload_id
+        )
+        return result, payload_url
+
+    payload_spec = _apply_marker(spec, param, payload)
+    if payload_spec.method == "GET":
+        result = await probe(
+            client.page, payload_spec.url, payload, payload_id=payload_id
+        )
+    elif payload_spec.method == "POST" and spec.form_page:
+        result = await probe_post_form_from_page(
+            client.page, spec.form_page, payload_spec.url, param, payload,
+            payload_id=payload_id,
+        )
+    elif payload_spec.method == "POST":
+        result = await probe_post_form(
+            client.page, payload_spec.url, payload_spec.form or {},
+            payload_id=payload_id,
+        )
+    else:
+        result = await probe_post_json(
+            client.page, payload_spec.url, payload_spec.json_body or {},
+            payload_id=payload_id,
+        )
+    return result, payload_spec.url
 
 
 async def scan(target: str | RequestSpec, *, proxy: str | None = None,
@@ -236,44 +277,49 @@ async def scan(target: str | RequestSpec, *, proxy: str | None = None,
                 payload = payloads_for(
                     det.context, pid_marker=payload_id
                 )[payload_index]
-                if source == "fragment":
-                    payload_url = _with_fragment_param(spec.url, param, payload)
-                    payload_spec = RequestSpec(method="GET", url=payload_url)
-                else:
-                    payload_spec = _apply_marker(spec, param, payload)
                 await pacer.pause()
-                if payload_spec.method == "GET":
-                    pr = await probe(
-                        client.page, payload_spec.url, payload,
-                        payload_id=payload_id,
-                    )
-                elif payload_spec.method == "POST" and spec.form_page:
-                    pr = await probe_post_form_from_page(
-                        client.page,
-                        spec.form_page,
-                        payload_spec.url,
-                        param,
-                        payload,
-                        payload_id=payload_id,
-                    )
-                elif payload_spec.method == "POST":
-                    pr = await probe_post_form(
-                        client.page, payload_spec.url, payload_spec.form or {},
-                        payload_id=payload_id,
-                    )
-                else:
-                    pr = await probe_post_json(
-                        client.page, payload_spec.url,
-                        payload_spec.json_body or {}, payload_id=payload_id,
-                    )
+                pr, payload_url = await _run_probe(
+                    client, spec, param, payload, payload_id, source
+                )
                 if client.budget_exhausted:
                     raise BudgetExhausted(
                         "request budget exhausted during browser oracle probe"
                     )
-                if pr.proven:
+                if not pr.proven:
+                    continue
+
+                # A positive execution must survive a paired benign control.
+                # Reusing the proof ID means stale/persisted execution from the
+                # active probe is visible during the control and is not silently
+                # attributed as a fresh differential result.
+                control_payload = control_payload_for(payload)
+                if control_payload is None:
                     result.findings.append(Finding(
-                        param=param, url=payload_spec.url, payload=payload,
+                        param=param, url=payload_url, payload=payload,
                         probe=pr, context=det.context.value,
+                        confidence="executed_without_control",
+                    ))
+                    break
+
+                await pacer.pause()
+                control_pr, _ = await _run_probe(
+                    client, spec, param, control_payload, payload_id, source
+                )
+                if client.budget_exhausted:
+                    result.findings.append(Finding(
+                        param=param, url=payload_url, payload=payload,
+                        probe=pr, context=det.context.value,
+                        confidence="executed_without_control",
+                    ))
+                    raise BudgetExhausted(
+                        "request budget exhausted during differential control"
+                    )
+                if not control_pr.proven:
+                    result.findings.append(Finding(
+                        param=param, url=payload_url, payload=payload,
+                        probe=pr, context=det.context.value,
+                        confidence="proven_execution",
+                        control_probe=control_pr,
                     ))
                     break
 
