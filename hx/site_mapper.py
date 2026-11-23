@@ -91,6 +91,8 @@ def _origin(url: str) -> tuple[str, str, int | None]:
         port = parsed.port
     except ValueError:
         port = None
+    if port is None:
+        port = 80 if scheme == "http" else 443 if scheme == "https" else None
     return scheme, host, port
 
 
