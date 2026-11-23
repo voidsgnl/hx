@@ -1,0 +1,58 @@
+from urllib.parse import urlsplit
+
+import pytest
+
+from hx.site_mapper import (
+    _behaviour_for,
+    _is_in_scope,
+    _page_key,
+    map_site,
+)
+
+
+def test_scope_is_exact_origin_not_just_hostname():
+    base = "https://example.test:443/"
+    assert _is_in_scope("https://example.test:443/login", base)
+    assert not _is_in_scope("https://sub.example.test:443/", base)
+    assert not _is_in_scope("https://example.test:8443/", base)
+    assert not _is_in_scope("http://example.test:443/", base)
+
+
+def test_page_key_deduplicates_values_but_preserves_parameter_names():
+    first = _page_key("https://example.test/search?q=alice&page=1")
+    second = _page_key("https://example.test/search?page=9&q=bob")
+    third = _page_key("https://example.test/search?term=bob")
+    assert first == second
+    assert first != third
+
+
+def test_behaviour_classifier_uses_route_and_form_semantics():
+    auth_form = [{
+        "fields": [
+            {"name": "email"},
+            {"name": "password"},
+        ]
+    }]
+    assert _behaviour_for("https://example.test/account", auth_form) == "authentication"
+    assert _behaviour_for("https://example.test/search", []) == "search"
+    assert _behaviour_for("https://example.test/notes", auth_form) == "authentication"
+
+
+@pytest.mark.asyncio
+async def test_maps_forms_and_groups_pages_without_submitting_them():
+    result = await map_site(
+        "http://localhost:5000/discovery",
+        budget=40,
+        max_pages=5,
+        max_depth=1,
+    )
+    assert result.pages
+    page = next(item for item in result.pages if item.url.endswith("/discovery"))
+    assert page.status == 200
+    assert page.behaviour == "form-workflow"
+    assert len(page.forms) == 2
+    assert {field["name"] for form in page.forms for field in form["fields"]} >= {
+        "q", "note"
+    }
+    assert result.groups
+    assert result.requests_used > 0
