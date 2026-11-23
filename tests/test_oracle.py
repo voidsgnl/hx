@@ -3,7 +3,7 @@ import pytest
 from urllib.parse import quote
 
 from hx.client import TargetClient
-from hx.oracle import probe, ORACLE_INIT_JS
+from hx.oracle import probe, ORACLE_INIT_JS, _origin_of
 from hx.payloads import control_payload_for
 
 BASE = "http://localhost:5000"
@@ -98,3 +98,18 @@ async def test_benign_control_callback_does_not_prove(client):
         client.page, url, control, payload_id="hx-control"
     )
     assert not result.proven
+
+
+
+@pytest.mark.parametrize(
+    ("url", "expected"),
+    [
+        ("https://example.com/path", "https://example.com"),
+        ("https://example.com:443/path", "https://example.com"),
+        ("http://example.com:8080/path", "http://example.com:8080"),
+        ("http://[::1]:5000/path", "http://[::1]:5000"),
+        ("data:text/html,hello", "null"),
+    ],
+)
+def test_origin_normalization(url, expected):
+    assert _origin_of(url) == expected
