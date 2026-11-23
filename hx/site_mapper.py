@@ -5,7 +5,6 @@ It never submits forms or sends vulnerability payloads.
 """
 from __future__ import annotations
 
-import asyncio
 from collections import defaultdict, deque
 from dataclasses import asdict, dataclass, field
 from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
@@ -163,6 +162,7 @@ async def map_site(
             oracle_init_script=ORACLE_INIT_JS,
             request_guard=pacer.reserve,
             headless=headless,
+            navigation_guard=lambda destination: _is_in_scope(destination, normalized_base),
         )
         await pacer.pause()
         if not await client.warm():
