@@ -76,7 +76,7 @@ def make_payload_id() -> str:
     return "hx" + uuid.uuid4().hex
 
 
-async def _prepare_probe(page, payload_id: str) -> None:
+async def _prepare_probe(page) -> None:
     # Reset the current document's telemetry. Proof attribution travels with
     # the unpredictable ID embedded in the payload, not origin-scoped storage.
     await page.evaluate("() => window.__hx_reset()")
@@ -108,7 +108,7 @@ async def probe(
     page, url: str, payload: str, *, payload_id: str, settle: float = 1.2
 ) -> ProbeResult:
     """Navigate to a payload URL and prove only execution carrying payload_id."""
-    await _prepare_probe(page, payload_id)
+    await _prepare_probe(page)
     try:
         await page.goto(url, wait_until="domcontentloaded", timeout=15000)
     except Exception:
