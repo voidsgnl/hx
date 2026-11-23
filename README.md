@@ -46,10 +46,10 @@ vulnerability engines:
    before they consume the request budget; documents, scripts, stylesheets, and
    fetch/XHR traffic remain available so application behaviour can still load.
 2. **Request classification** — separates application endpoints from framework
-   navigation traffic such as Next.js RSC/prefetch (`?_rsc=`) requests.
-   Redundant framework GET transports are aborted before they consume discovery
-   budget and are counted separately for visibility. Application API requests
-   and POST Server Actions remain available for discovery.
+   navigation traffic such as Next.js RSC (`?_rsc=`) requests. Explicit
+   framework prefetch GETs are aborted before they consume discovery budget and
+   are counted separately for visibility. Real client-side navigation, application
+   API requests, and POST Server Actions remain available for discovery.
 3. **Behaviour analysis** — groups pages into surfaces such as authentication,
    search, user content, file handling, and general form workflows.
 3. **Engine registry** — selects independent vulnerability engines for each
