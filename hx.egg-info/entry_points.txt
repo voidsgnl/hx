@@ -1,2 +1,0 @@
-[console_scripts]
-hx = hx.cli:app
