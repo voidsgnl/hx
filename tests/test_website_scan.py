@@ -212,11 +212,16 @@ async def test_website_scan_replays_authenticated_json_api_with_custom_csrf_head
     )
     assert result.post_apis_tested == 1
     assert result.skipped_post_apis == 0
-    assert any(
-        endpoint.method == "POST" and endpoint.request_body
-        for endpoint in result.site_map.endpoints
+    api_endpoint = next(
+        endpoint for endpoint in result.site_map.endpoints
+        if endpoint.method == "POST" and endpoint.request_body
     )
-    assert any(finding.param == "message" for finding in result.findings)
+    assert api_endpoint.headers.get("authorization") == "Bearer hx-api-secret"
+    assert api_endpoint.headers.get("x-csrf-token") == "hx-api-csrf"
+    assert result.scans and any(
+        candidate.param == "message" for candidate in result.scans[0].reflections
+    ), result.to_dict()
+    assert any(finding.param == "message" for finding in result.findings), result.to_dict()
     assert result.findings[0].confidence == "proven_execution"
     public_endpoint = result.to_dict()["site_map"]["endpoints"][0]
     assert public_endpoint["headers"]["authorization"] == "<redacted>"
