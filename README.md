@@ -34,8 +34,8 @@ vulnerability engines:
 3. **Engine registry** — selects independent vulnerability engines for each
    discovered input surface.
 4. **Verification** — each engine applies its own evidence requirements. The
-   currently implemented website engine is XSS, which uses the Chromium
-   execution oracle described below.
+   currently implemented engines are XSS and open redirect. XSS uses the
+   Chromium execution oracle; open redirect checks HTTP Location headers.
 
 This structure lets hx add vulnerability classes without coupling their
 payloads or verification rules to the crawler.
@@ -168,8 +168,9 @@ hx scan "http://localhost:5000/"
 ```
 
 Website mode maps same-origin pages, groups them by observable behaviour, then
-runs the current XSS engine against discovered GET query parameters and GET
-form inputs. Control discovery size with:
+runs the applicable registered engines against discovered GET inputs. The
+current engines check XSS and recognized open-redirect parameters. Control
+discovery size with:
 
 ```bash
 hx scan "http://localhost:5000/" --max-pages 50 --max-depth 3 --budget 300
@@ -413,9 +414,9 @@ Re-check this compatibility when either dependency is upgraded.
 hx is intentionally a focused scanner, not a general web crawler or
 comprehensive application security testing suite.
 
-- Website mode currently tests discovered GET inputs with the XSS engine.
-  POST forms and other vulnerability classes are mapped but not actively
-  tested yet.
+- Website mode tests discovered GET inputs with the XSS and
+  open-redirect engines. Active POST testing currently covers HTML forms only;
+  POST API endpoints and other vulnerability classes are not actively tested.
 - The separate `discover` command is read-only and never submits forms.
 - Reflection and context detection are heuristics. A reflection may be
   harmless, and a real vulnerability may not be reflected in a way hx
