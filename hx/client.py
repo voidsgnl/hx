@@ -48,41 +48,62 @@ class TargetClient:
             self.profile_dir = tempfile.mkdtemp(prefix="hx-profile-")
         else:
             Path(self.profile_dir).mkdir(parents=True, exist_ok=True)
-        self._pw = await async_playwright().start()
-        launch_kwargs = dict(
-            headless=headless,
-            args=[
-                "--disable-blink-features=AutomationControlled",
-                "--no-sandbox",
-            ],
-            viewport={"width": 1366, "height": 768},
-            locale="en-US",
-            timezone_id="America/New_York",
-        )
-        if self.proxy:
-            launch_kwargs["proxy"] = {"server": self.proxy}
-        self._context = await self._pw.chromium.launch_persistent_context(
-            user_data_dir=self.profile_dir, **launch_kwargs
-        )
+        try:
+            self._pw = await async_playwright().start()
+            launch_kwargs = dict(
+                headless=headless,
+                args=[
+                    "--disable-blink-features=AutomationControlled",
+                    "--no-sandbox",
+                ],
+                viewport={"width": 1366, "height": 768},
+                locale="en-US",
+                timezone_id="America/New_York",
+            )
+            if self.proxy:
+                launch_kwargs["proxy"] = {"server": self.proxy}
+            self._context = await self._pw.chromium.launch_persistent_context(
+                user_data_dir=self.profile_dir, **launch_kwargs
+            )
+    
+            if self.request_guard:
+                async def guard_route(route):
+                    request_url = route.request.url
+                    if request_url.startswith(("http://", "https://")):
+                        try:
+                            self.request_guard()
+                        except BudgetExhausted:
+                            self.budget_exhausted = True
+                            await route.abort(error_code="blockedbyclient")
+                            return
+                    await route.continue_()
+    
+                await self._context.route("**/*", guard_route)
+    
+            # Install stealth + oracle BEFORE any navigation.
+            await self._context.add_init_script(STEALTH_JS)
+            await self._context.add_init_script(oracle_init_script)
+            self.page = await self._context.new_page()
+        except BaseException:
+            await self._cleanup_start_failure()
+            raise
 
-        if self.request_guard:
-            async def guard_route(route):
-                request_url = route.request.url
-                if request_url.startswith(("http://", "https://")):
-                    try:
-                        self.request_guard()
-                    except BudgetExhausted:
-                        self.budget_exhausted = True
-                        await route.abort(error_code="blockedbyclient")
-                        return
-                await route.continue_()
-
-            await self._context.route("**/*", guard_route)
-
-        # Install stealth + oracle BEFORE any navigation.
-        await self._context.add_init_script(STEALTH_JS)
-        await self._context.add_init_script(oracle_init_script)
-        self.page = await self._context.new_page()
+    async def _cleanup_start_failure(self):
+        """Release partially initialized resources when startup fails."""
+        try:
+            if self._context:
+                await self._context.close()
+        finally:
+            self._context = None
+            self.page = None
+            try:
+                if self._pw:
+                    await self._pw.stop()
+            finally:
+                self._pw = None
+                if self._owns_profile and self.profile_dir:
+                    shutil.rmtree(self.profile_dir, ignore_errors=True)
+                    self.profile_dir = None
 
     async def warm(self, timeout_ms: int = 20000) -> bool:
         """Hit origin, wait out JS challenge. True if we reached app content."""
