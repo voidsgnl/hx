@@ -40,12 +40,26 @@ class WebsiteScanResult:
             "mapping_budget_exhausted": self.mapping_budget_exhausted,
             "requests_used": self.requests_used,
             "budget_exhausted": self.budget_exhausted,
+            "findings": [
+                {
+                    "target": result.target,
+                    "param": finding.param,
+                    "url": finding.url,
+                    "payload": finding.payload,
+                    "payload_id": finding.probe.payload_id,
+                    "context": finding.context,
+                    "hits": [asdict(hit) for hit in finding.probe.hits],
+                }
+                for result in self.scans
+                for finding in result.findings
+            ],
             "scans": [
                 {
                     "target": result.target,
                     "reached_app": result.reached_app,
                     "requests_used": result.requests_used,
                     "budget_exhausted": result.budget_exhausted,
+                    "fingerprint": result.fingerprint,
                     "reflections": [asdict(item) for item in result.reflections],
                     "findings": [
                         {
