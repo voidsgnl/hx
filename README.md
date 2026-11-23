@@ -130,6 +130,7 @@ hx version
 hx --help
 hx scan --help
 hx discover --help
+hx session --help
 ```
 
 If you prefer pip to resolve the development dependencies rather than use the
@@ -182,10 +183,48 @@ hx scan "http://localhost:5000/reflect" --mode target
 ```
 
 The explicit target mode preserves direct testing of paths without query
-strings. Website mode maps POST forms but does not submit them automatically,
-because POST requests can change application state. SQL injection, SSRF,
-authentication, and file-upload engines are not implemented yet; the mapper
-records relevant surfaces so those engines can be added independently.
+strings. POST forms are discovered but remain passive unless you explicitly
+enable active POST testing.
+
+### Authenticated POST form testing
+
+Capture an authenticated browser session first:
+
+```bash
+hx session "https://app.example.com/login" --output .hx/session.json
+```
+
+Chromium opens visibly. Log in normally, return to the terminal, and press
+Enter. hx saves the browser cookies and localStorage as a Playwright storage
+state file with owner-only permissions.
+
+Use that state for a website scan:
+
+```bash
+hx scan "https://app.example.com/" \\
+  --storage-state .hx/session.json \\
+  --active-post \\
+  --budget 500
+```
+
+Active POST testing reloads each source form in the same authenticated browser
+context before each probe. That preserves current hidden fields (including
+ordinary hidden CSRF tokens), cookies, and normal form submission handlers.
+Authentication forms are excluded by default. To include them, add
+`--include-auth-forms`; this can trigger account lockouts or alter login
+state. Password and file inputs are never selected as injection parameters,
+and file-upload forms are not actively submitted.
+
+**Important:** active POST testing submits real application forms and can
+change server-side state. Use it only on systems and accounts you are
+authorized to test, preferably in a staging environment. It currently covers
+HTML POST forms, not browser-observed POST API endpoints. Applications that
+depend on sessionStorage or custom JavaScript-only CSRF headers may need
+additional session/request integration.
+
+SQL injection, SSRF, open-redirect, authentication-logic, and file-upload
+vulnerability engines are not implemented yet. The engine registry is the
+extension point for adding their own detection and verification logic.
 
 ### Scan a GET URL
 
