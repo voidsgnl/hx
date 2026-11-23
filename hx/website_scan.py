@@ -14,7 +14,9 @@ from hx.engines import AttackSurface, EngineContext, default_registry
 from hx.oracle import ORACLE_INIT_JS
 from hx.pacer import Pacer
 from hx.scanner import ScanResult
-from hx.site_mapper import SiteMapResult, _is_in_scope, _page_key, map_site
+from hx.site_mapper import (
+    SiteMapResult, _is_in_scope, _mapping_request_allowed, _page_key, map_site,
+)
 
 
 @dataclass
@@ -339,6 +341,9 @@ async def scan_website(
         request_guard=mapping_pacer.reserve,
         headless=headless,
         navigation_guard=lambda destination: _is_in_scope(destination, base_url),
+        request_filter=lambda request: _mapping_request_allowed(
+            request.url, request.resource_type, base_url
+        ),
         storage_state=storage_state,
     )
     test_pacer: Pacer | None = None
