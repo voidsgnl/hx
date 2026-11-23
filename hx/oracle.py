@@ -335,6 +335,33 @@ async def refresh_api_headers(page, source_page: str, action: str) -> dict[str, 
     return {}
 
 
+async def submit_json_from_page(
+    page,
+    action: str,
+    body: dict,
+    *,
+    headers: dict[str, str] | None = None,
+) -> str:
+    """Submit a JSON probe from the authenticated source page and return its body."""
+    try:
+        return await page.evaluate(
+            """async ({action, body, headers}) => {
+              const requestHeaders = new Headers(headers || {});
+              requestHeaders.set("Content-Type", "application/json");
+              const response = await fetch(action, {
+                method: "POST",
+                credentials: "same-origin",
+                headers: requestHeaders,
+                body: JSON.stringify(body)
+              });
+              return await response.text();
+            }""",
+            {"action": action, "body": body, "headers": headers or {}},
+        )
+    except Exception:
+        return ""
+
+
 async def probe_post_json(
     page,
     action: str,
