@@ -29,6 +29,8 @@ class EngineRegistry:
 def default_registry() -> EngineRegistry:
     """Return the engines currently implemented by hx."""
     registry = EngineRegistry()
-    registry.register(XSSEngine())
+    # Run cheap, single-request redirect checks before the more expensive XSS
+    # execution pipeline so broad scans do not starve low-cost engines.
     registry.register(OpenRedirectEngine())
+    registry.register(XSSEngine())
     return registry
