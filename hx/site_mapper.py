@@ -205,11 +205,32 @@ def _page_key(url: str) -> str:
     ))
 
 
-def _mapping_request_allowed(request) -> bool:
-    """Skip passive media and redundant framework GET transports before budgeting.
+def _is_framework_prefetch_request(
+    url: str,
+    headers: dict[str, str] | None = None,
+    method: str = "GET",
+) -> bool:
+    """Identify explicit framework prefetches, not real client-side navigation."""
+    if method.upper() != "GET" or not _is_framework_navigation_request(
+        url, headers, method
+    ):
+        return False
+    normalized = {
+        key.lower(): value.lower() for key, value in (headers or {}).items()
+    }
+    return (
+        normalized.get("next-router-prefetch") in {"1", "true"}
+        or "prefetch" in normalized.get("purpose", "")
+        or "prefetch" in normalized.get("sec-purpose", "")
+        or "next-router-segment-prefetch" in normalized
+    )
 
-    Next.js RSC/prefetch GETs are not independent application input surfaces.
-    They are safely aborted during mapping; POST Server Actions remain visible.
+
+def _mapping_request_allowed(request) -> bool:
+    """Skip passive media and explicit framework prefetches before budgeting.
+
+    Real RSC navigation and application API traffic remain available. POST
+    Server Actions are never filtered by this rule.
     """
     if isinstance(request, str):
         resource_type = request.lower()
@@ -226,8 +247,7 @@ def _mapping_request_allowed(request) -> bool:
         return False
     if (
         resource_type in {"xhr", "fetch"}
-        and method == "GET"
-        and _is_framework_navigation_request(request_url, headers, method)
+        and _is_framework_prefetch_request(request_url, headers, method)
     ):
         return False
     return True
