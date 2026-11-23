@@ -4,6 +4,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Protocol
 
+from hx.client import TargetClient
+from hx.pacer import Pacer
+
 
 @dataclass(frozen=True)
 class AttackSurface:
@@ -18,11 +21,14 @@ class AttackSurface:
 
 @dataclass(frozen=True)
 class EngineContext:
-    """Runtime controls shared with each engine."""
+    """Runtime controls and shared session resources passed to each engine."""
 
     proxy: str | None
     budget: int
     headless: bool
+    client: TargetClient | None = None
+    pacer: Pacer | None = None
+    client_ready: bool = False
 
 
 class VulnerabilityEngine(Protocol):
