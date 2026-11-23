@@ -1,5 +1,8 @@
 from dataclasses import asdict
 
+import hx.scanner as scanner_module
+from hx.client import TargetClient
+from hx.oracle import ORACLE_INIT_JS
 from hx.scanner import scan
 
 BASE = "http://localhost:5000"
@@ -67,3 +70,45 @@ async def test_coverage_json_shape():
         "requests_unaccounted",
     }
     assert asdict(result.coverage) == payload["coverage"]
+
+
+async def test_unaccounted_is_measured_not_assigned(monkeypatch):
+    client = TargetClient(BASE)
+    await client.start(oracle_init_script=ORACLE_INIT_JS)
+    try:
+        normal = await scan(
+            f"{BASE}/safe?q=test",
+            budget=30,
+            _client=client,
+            _warm=False,
+        )
+        assert normal.coverage.requests_unaccounted == 0
+
+        original_check = scanner_module.check_fingerprint_match
+
+        async def check_with_unguarded_request(page, impersonate):
+            guard = client.request_guard
+            client.request_guard = None
+            try:
+                await page.goto(
+                    f"{BASE}/safe?q=unguarded",
+                    wait_until="domcontentloaded",
+                    timeout=5000,
+                )
+            finally:
+                client.request_guard = guard
+            return await original_check(page, impersonate)
+
+        monkeypatch.setattr(
+            scanner_module, "check_fingerprint_match",
+            check_with_unguarded_request,
+        )
+        bypassed = await scan(
+            f"{BASE}/safe?q=test",
+            budget=30,
+            _client=client,
+            _warm=False,
+        )
+        assert bypassed.coverage.requests_unaccounted >= 1
+    finally:
+        await client.close()

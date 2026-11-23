@@ -4,6 +4,9 @@ from hx.client import TargetClient
 
 
 class FakeContext:
+    async def route(self, pattern, handler):
+        pass
+
     async def add_init_script(self, script):
         pass
 

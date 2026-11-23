@@ -254,6 +254,8 @@ async def scan(target: str | RequestSpec, *, proxy: str | None = None,
     pacer = _pacer or Pacer(budget=budget)
     owns_client = _client is None
     client = _client or TargetClient(origin, proxy=proxy)
+    client.request_guard = pacer.reserve
+    unaccounted_start = client.requests_unaccounted
     request_start = pacer.used
     def record_blocked(status: int, method: str, url: str) -> None:
         if status not in (403, 429) and status < 500:
@@ -266,12 +268,10 @@ async def scan(target: str | RequestSpec, *, proxy: str | None = None,
     if owns_client:
         await client.start(
             oracle_init_script=ORACLE_INIT_JS,
-            request_guard=pacer.reserve,
+            request_guard=client.request_guard,
             headless=headless,
             storage_state=storage_state,
         )
-    else:
-        client.request_guard = pacer.reserve
     try:
         if _warm:
             await pacer.pause()
@@ -464,7 +464,9 @@ async def scan(target: str | RequestSpec, *, proxy: str | None = None,
         result.coverage.budget_used = pacer.used - request_start
         result.coverage.budget_limit = pacer.budget
         result.coverage.budget_exhausted = result.budget_exhausted
-        result.coverage.requests_unaccounted = 0
+        result.coverage.requests_unaccounted = (
+            client.requests_unaccounted - unaccounted_start
+        )
         accounted = (
             result.coverage.params_tested
             + result.coverage.params_skipped

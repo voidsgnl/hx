@@ -40,6 +40,7 @@ class TargetClient:
         self._context: BrowserContext | None = None
         self.page: Page | None = None
         self.request_guard = None
+        self.requests_unaccounted = 0
         self.budget_exhausted = False
 
     async def start(self, oracle_init_script: str, request_guard=None,
@@ -68,24 +69,26 @@ class TargetClient:
                 user_data_dir=self.profile_dir, **launch_kwargs
             )
     
-            if self.request_guard:
-                async def guard_route(route):
-                    request_url = route.request.url
-                    if (navigation_guard
-                            and route.request.is_navigation_request()
-                            and not navigation_guard(request_url)):
-                        await route.abort(error_code="blockedbyclient")
-                        return
-                    if request_url.startswith(("http://", "https://")):
+            async def guard_route(route):
+                request_url = route.request.url
+                if (navigation_guard
+                        and route.request.is_navigation_request()
+                        and not navigation_guard(request_url)):
+                    await route.abort(error_code="blockedbyclient")
+                    return
+                if request_url.startswith(("http://", "https://")):
+                    if self.request_guard is None:
+                        self.requests_unaccounted += 1
+                    else:
                         try:
                             self.request_guard()
                         except BudgetExhausted:
                             self.budget_exhausted = True
                             await route.abort(error_code="blockedbyclient")
                             return
-                    await route.continue_()
+                await route.continue_()
     
-                await self._context.route("**/*", guard_route)
+            await self._context.route("**/*", guard_route)
     
             # Restore an explicitly supplied Playwright storage state before
             # the first page is opened. Cookie and localStorage state stay local.

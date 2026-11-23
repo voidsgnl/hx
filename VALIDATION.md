@@ -108,3 +108,15 @@ Run on 2026-11-22 against the locally hosted Juice Shop at `localhost:3000`.
   remains the only target on which the full proof pipeline has been
   demonstrated.
 
+### Request-accounting follow-up
+
+- `TargetClient` always installs its browser request route. If a request
+  reaches that route without `request_guard`, the client increments
+  `requests_unaccounted`; `scan()` snapshots that counter and installs the
+  current scan's `pacer.reserve` before making scan requests, including when
+  the client was pre-started and injected through `_client`.
+- `coverage.requests_unaccounted` is the client counter delta during the
+  scan, not a constant. `test_unaccounted_is_measured_not_assigned` verifies
+  both a normal shared-client scan reports zero and a deliberately
+  guard-disabled request during a scan is reported as nonzero.
+
