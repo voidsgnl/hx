@@ -4,7 +4,7 @@ import pytest
 
 from hx.site_mapper import SiteMapResult, DiscoveredPage
 from hx.website_scan import (
-    _get_form_target, _post_surfaces_from_map, _targets_from_map, scan_website,
+    _get_form_target, _post_surfaces_from_map, _api_surfaces_from_map, _targets_from_map, scan_website,
 )
 from hx.engines import AttackSurface, default_registry
 import hx.website_scan as website_scan_module
@@ -171,3 +171,52 @@ async def test_website_scan_active_post_preserves_authenticated_session_and_csrf
     assert result.skipped_post_forms == 0
     assert result.tested_targets
     assert any(finding.param == "q" for finding in result.findings)
+
+
+
+def test_api_planner_preserves_json_body_and_auth_headers_but_skips_secrets():
+    site_map = SiteMapResult(target="https://example.test/")
+    from hx.site_mapper import DiscoveredEndpoint
+    site_map.endpoints.append(DiscoveredEndpoint(
+        url="https://example.test/api/update",
+        method="POST",
+        resource_type="fetch",
+        source_page="https://example.test/profile",
+        request_body={"message": "hello", "csrf_token": "secret-token"},
+        headers={
+            "content-type": "application/json",
+            "authorization": "Bearer private",
+            "x-csrf-token": "csrf-private",
+        },
+        content_type="application/json",
+    ))
+    surfaces = _api_surfaces_from_map(site_map)
+    assert len(surfaces) == 1
+    assert surfaces[0].parameters == ("message",)
+    assert surfaces[0].request_body["csrf_token"] == "secret-token"
+    assert surfaces[0].headers["authorization"] == "Bearer private"
+    public = site_map.to_dict()["endpoints"][0]
+    assert public["headers"]["authorization"] == "<redacted>"
+    assert public["headers"]["x-csrf-token"] == "csrf-private"
+    assert public["request_body"]["csrf_token"] == "<redacted>"
+
+
+@pytest.mark.asyncio
+async def test_website_scan_replays_authenticated_json_api_with_custom_csrf_header():
+    result = await website_scan_module.scan_website(
+        "http://localhost:5000/api-page",
+        budget=160,
+        max_pages=2,
+        max_depth=0,
+        active_api=True,
+    )
+    assert result.post_apis_tested == 1
+    assert result.skipped_post_apis == 0
+    assert any(
+        endpoint.method == "POST" and endpoint.request_body
+        for endpoint in result.site_map.endpoints
+    )
+    assert any(finding.param == "message" for finding in result.findings)
+    assert result.findings[0].confidence == "proven_execution"
+    public_endpoint = result.to_dict()["site_map"]["endpoints"][0]
+    assert public_endpoint["headers"]["authorization"] == "<redacted>"
