@@ -39,12 +39,26 @@ class DiscoveredEndpoint:
             )
             for key, value in self.headers.items()
         }
-        safe_body = {}
-        for key, value in (self.request_body or {}).items():
-            if any(word in key.lower() for word in ("password", "secret", "token", "key", "credential")):
-                safe_body[key] = "<redacted>"
-            else:
-                safe_body[key] = value
+        sensitive_words = (
+            "password", "secret", "token", "key", "credential", "csrf",
+            "session", "auth", "signature",
+        )
+
+        def redact_body(value):
+            if isinstance(value, dict):
+                return {
+                    key: (
+                        "<redacted>"
+                        if any(word in str(key).lower() for word in sensitive_words)
+                        else redact_body(child)
+                    )
+                    for key, child in value.items()
+                }
+            if isinstance(value, list):
+                return [redact_body(child) for child in value]
+            return value
+
+        safe_body = redact_body(self.request_body or {})
         return {
             "url": self.url, "method": self.method,
             "resource_type": self.resource_type, "source_page": self.source_page,
