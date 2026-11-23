@@ -4,6 +4,8 @@ The context routes every network request through a shared budget guard so
 navigation, redirects, and subresources are counted individually.
 """
 import asyncio
+import shutil
+import tempfile
 from pathlib import Path
 from playwright.async_api import async_playwright, BrowserContext, Page
 from hx.pacer import BudgetExhausted
@@ -30,7 +32,9 @@ class TargetClient:
                  profile_dir: str | None = None):
         self.origin = origin.rstrip("/")
         self.proxy = proxy
-        self.profile_dir = profile_dir or "/tmp/hx-profile"
+        # Private temporary profiles prevent concurrent scans sharing Chromium state.
+        self._owns_profile = profile_dir is None
+        self.profile_dir = profile_dir
         self._pw = None
         self._context: BrowserContext | None = None
         self.page: Page | None = None
@@ -40,7 +44,10 @@ class TargetClient:
     async def start(self, oracle_init_script: str, request_guard=None,
                     headless: bool = True):
         self.request_guard = request_guard
-        Path(self.profile_dir).mkdir(parents=True, exist_ok=True)
+        if self.profile_dir is None:
+            self.profile_dir = tempfile.mkdtemp(prefix="hx-profile-")
+        else:
+            Path(self.profile_dir).mkdir(parents=True, exist_ok=True)
         self._pw = await async_playwright().start()
         launch_kwargs = dict(
             headless=headless,
@@ -104,7 +111,17 @@ class TargetClient:
         return await self._context.cookies()
 
     async def close(self):
-        if self._context:
-            await self._context.close()
-        if self._pw:
-            await self._pw.stop()
+        """Close Chromium and remove only profiles created by this client."""
+        try:
+            if self._context:
+                await self._context.close()
+                self._context = None
+        finally:
+            try:
+                if self._pw:
+                    await self._pw.stop()
+                    self._pw = None
+            finally:
+                if self._owns_profile and self.profile_dir:
+                    shutil.rmtree(self.profile_dir, ignore_errors=True)
+                    self.profile_dir = None
