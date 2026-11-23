@@ -13,7 +13,14 @@ class XSSEngine:
 
     async def run(self, surface: AttackSurface, context: EngineContext) -> ScanResult:
         target = surface.url
-        if surface.method.upper() == "POST":
+        if surface.source == "browser-api" and surface.method.upper() == "POST":
+            spec = RequestSpec(
+                method="JSON", url=surface.url,
+                json_body=dict(surface.request_body or {}),
+                headers=surface.headers,
+            )
+            target = spec
+        elif surface.method.upper() == "POST":
             spec = RequestSpec(
                 method="POST",
                 url=surface.url,
