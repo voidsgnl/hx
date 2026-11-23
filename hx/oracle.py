@@ -287,6 +287,54 @@ async def probe_post_form_from_page(
     return await _collect_result(page, payload_id, _origin_of(action))
 
 
+async def refresh_api_headers(page, source_page: str, action: str) -> dict[str, str]:
+    """Reload the API's source page and capture fresh headers from its own request.
+
+    This lets applications rotate CSRF or request-signing headers on page load.
+    Only replay-relevant headers are returned; browser-managed transport headers
+    such as Host, Origin, Content-Length, and Cookie are left to Chromium.
+    """
+    captured = []
+
+    def on_request(request):
+        if request.method.upper() == "POST" and request.url.split("#", 1)[0] == action.split("#", 1)[0]:
+            captured.append(request)
+
+    page.on("request", on_request)
+    try:
+        await page.goto(
+            source_page, wait_until="domcontentloaded", timeout=15000
+        )
+        try:
+            await page.wait_for_load_state("networkidle", timeout=3000)
+        except Exception:
+            pass
+        if not captured:
+            try:
+                await page.wait_for_timeout(300)
+            except Exception:
+                pass
+        for request in reversed(captured):
+            try:
+                headers = await request.all_headers()
+            except Exception:
+                headers = request.headers
+            return {
+                key.lower(): value
+                for key, value in headers.items()
+                if key.lower() in ("authorization", "content-type", "accept")
+                or key.lower().startswith("x-")
+            }
+    except Exception:
+        pass
+    finally:
+        try:
+            page.remove_listener("request", on_request)
+        except Exception:
+            pass
+    return {}
+
+
 async def probe_post_json(
     page,
     action: str,
@@ -294,14 +342,19 @@ async def probe_post_json(
     *,
     payload_id: str,
     headers: dict[str, str] | None = None,
+    source_page: str | None = None,
     settle: float = 1.8,
 ) -> ProbeResult:
     parsed = urlparse(action)
     origin = f"{parsed.scheme}://{parsed.netloc}/"
-    try:
-        await page.goto(origin, wait_until="domcontentloaded", timeout=15000)
-    except Exception:
-        pass
+    fresh_headers = {}
+    if source_page:
+        fresh_headers = await refresh_api_headers(page, source_page, action)
+    else:
+        try:
+            await page.goto(origin, wait_until="domcontentloaded", timeout=15000)
+        except Exception:
+            pass
     await _prepare_probe(page)
     try:
         await page.evaluate(
@@ -319,7 +372,7 @@ async def probe_post_json(
               document.write(text);
               document.close();
             }""",
-            {"action": action, "body": body, "headers": headers or {}},
+            {"action": action, "body": body, "headers": {**(headers or {}), **fresh_headers}},
         )
     except Exception:
         pass
