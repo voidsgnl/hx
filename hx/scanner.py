@@ -36,6 +36,7 @@ class RequestSpec:
     form: dict[str, str] | None = None
     json_body: dict | None = None
     form_page: str | None = None
+    headers: dict[str, str] | None = None
 
 
 @dataclass
@@ -102,7 +103,7 @@ def _apply_marker(spec: RequestSpec, param: str, value: str) -> RequestSpec:
     if spec.method == "JSON":
         body = dict(spec.json_body or {})
         body[param] = value
-        return RequestSpec(method="JSON", url=spec.url, json_body=body)
+        return RequestSpec(method="JSON", url=spec.url, json_body=body, headers=spec.headers)
     raise ValueError(f"unknown method {spec.method}")
 
 
