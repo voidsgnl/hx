@@ -129,6 +129,22 @@ class FastPath:
         # Hosts belonging to the scanned target; cookie scope is checked separately.
         self._allowed_domains = {d.lower().lstrip(".").rstrip(".") for d in domains}
 
+    def inspect_redirect(
+        self, url: str, browser_cookies: list[dict]
+    ) -> tuple[int, str | None]:
+        """Inspect one GET response without following its Location header."""
+        self._reserve_request()
+        response = cffi.get(
+            url,
+            allow_redirects=False,
+            impersonate=self.impersonate,
+            cookies=self._cookies(browser_cookies, url),
+            proxies=self.proxies,
+            http_version="v1",
+            timeout=15,
+        )
+        return response.status_code, response.headers.get("Location")
+
     def fetch_body(self, url: str, browser_cookies: list[dict]) -> str:
         """Fetch a response body for context detection; never prove execution."""
         r = self._request("GET",
