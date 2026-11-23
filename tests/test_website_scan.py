@@ -288,3 +288,26 @@ async def test_website_scan_replays_nested_json_with_rotating_csrf_header():
         and finding.confidence == "proven_execution"
         for finding in result.findings
     ), result.to_dict()
+
+
+
+def test_site_map_redacts_nested_api_secrets_recursively():
+    from hx.site_mapper import DiscoveredEndpoint
+    site_map = SiteMapResult(target="https://example.test/")
+    site_map.endpoints.append(DiscoveredEndpoint(
+        url="https://example.test/api",
+        method="POST",
+        resource_type="fetch",
+        source_page="https://example.test/profile",
+        request_body={
+            "profile": {"bio": "public", "csrf_token": "private-token"},
+            "items": [{"label": "public-label", "session_id": "private-session"}],
+        },
+        headers={"x-csrf-token": "private-header"},
+        content_type="application/json",
+    ))
+    exported = site_map.to_dict()["endpoints"][0]
+    assert exported["request_body"]["profile"]["bio"] == "public"
+    assert exported["request_body"]["profile"]["csrf_token"] == "<redacted>"
+    assert exported["request_body"]["items"][0]["session_id"] == "<redacted>"
+    assert exported["headers"]["x-csrf-token"] == "<redacted>"
