@@ -94,11 +94,11 @@ class OpenRedirectEngine:
         canary = f"https://{CANARY_HOST}{CANARY_PATH}"
 
         try:
-            query_parameters = {
+            query_parameters = sorted({
                 name for name, _ in parse_qsl(
                     urlsplit(surface.url).query, keep_blank_values=True
                 )
-            }
+            })
             for parameter in query_parameters:
                 if parameter.lower() not in REDIRECT_PARAMETERS:
                     continue
