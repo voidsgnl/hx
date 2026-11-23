@@ -205,6 +205,19 @@ def _page_key(url: str) -> str:
     ))
 
 
+def _mapping_request_allowed(
+    request_url: str,
+    resource_type: str,
+    base_url: str,
+) -> bool:
+    """Keep requests useful for DOM/API discovery; skip heavy passive assets."""
+    if not _is_in_scope(request_url, base_url):
+        return False
+    if resource_type.lower() in {"image", "font", "media"}:
+        return False
+    return True
+
+
 def _is_framework_navigation_request(
     url: str,
     headers: dict[str, str] | None = None,
@@ -308,19 +321,26 @@ async def map_site(
                 request_guard=pacer.reserve,
                 headless=headless,
                 navigation_guard=lambda destination: _is_in_scope(destination, normalized_base),
+                request_filter=lambda request: _mapping_request_allowed(
+                    request.url, request.resource_type, normalized_base
+                ),
                 storage_state=storage_state,
             )
         else:
             client.request_guard = pacer.reserve
             client.budget_exhausted = False
         await client.page.add_init_script(_ROUTE_CAPTURE_JS)
+        preloaded_key = None
         if _warm:
             if progress:
-                progress(f"[dim]Connecting[/dim] Checking reachability of {origin}")
+                progress(f"[dim]Connecting[/dim] Opening the first page {normalized_base}")
             await pacer.pause()
-            if not await client.warm():
+            if not await client.warm(url=normalized_base):
                 result.errors.append("Could not reach the application origin.")
+                if client.budget_exhausted or pacer.exhausted:
+                    result.budget_exhausted = True
                 return result
+            preloaded_key = _page_key(client.page.url)
 
         while queue and len(result.pages) < max_pages:
             url, depth = queue.popleft()
@@ -422,11 +442,17 @@ async def map_site(
             client.page.on("request", record_request)
             status = None
             try:
-                await pacer.pause()
-                response = await client.page.goto(
-                    url, wait_until="domcontentloaded", timeout=20000
-                )
-                status = response.status if response else None
+                if preloaded_key == key and _page_key(client.page.url) == key:
+                    # The reachability check already loaded the first target;
+                    # reuse it instead of downloading the homepage twice.
+                    status = client.last_response_status
+                    preloaded_key = None
+                else:
+                    await pacer.pause()
+                    response = await client.page.goto(
+                        url, wait_until="domcontentloaded", timeout=20000
+                    )
+                    status = response.status if response else None
                 final_url = client.page.url
                 if progress:
                     progress(f"[dim]HTTP response[/dim] {status if status is not None else 'no status'} — {final_url}")
