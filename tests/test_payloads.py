@@ -5,7 +5,7 @@ from urllib.parse import quote
 from hx.client import TargetClient
 from hx.fastpath import FastPath
 from hx.oracle import probe, ORACLE_INIT_JS, make_payload_id
-from hx.payloads import detect_context, payloads_for, Context
+from hx.payloads import detect_context, payloads_for, control_payload_for, Context
 
 BASE = "http://localhost:5000"
 
@@ -92,3 +92,13 @@ async def test_eval_sink_still_proves(client, path, expected_ctx):
             proven = True
             break
     assert proven, f"{path}: no JS_STRING_SINGLE payload proved"
+
+
+
+def test_control_payload_changes_only_the_proof_callback():
+    active = "<img src=x onerror=window.__hx_proof('hx123')>"
+    control = control_payload_for(active)
+    assert control == "<img src=x onerror=window.__hx_noop_('hx123')>"
+    assert len(control) == len(active)
+    assert control.count("hx123") == 1
+    assert control_payload_for("<script>alert(1)</script>") is None
