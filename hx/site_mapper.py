@@ -554,9 +554,10 @@ async def map_site(
                                 )
                                 break
                         except BudgetExhausted:
+                            result.budget_exhausted = True
                             if progress:
-                                progress(f"[yellow]Discovery budget reached[/yellow] while exploring {control.get('name', '')!r}")
-                            raise
+                                progress(f"[yellow]Discovery budget reached[/yellow] while exploring {control.get('name', '')!r}; keeping the page discovery already collected")
+                            break
                         except Exception as exc:
                             result.errors.append(
                                 f"{url}: UI control {control.get('name', '')!r}: "
