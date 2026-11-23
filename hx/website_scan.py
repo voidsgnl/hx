@@ -156,8 +156,27 @@ def _targets_from_map(site_map: SiteMapResult) -> tuple[list[str], int, int]:
 
 
 def _api_surfaces_from_map(site_map: SiteMapResult) -> list[AttackSurface]:
-    """Select replayable JSON POST APIs with mutable, non-secret scalar fields."""
+    """Select replayable JSON POST APIs with mutable, non-secret scalar leaves."""
     surfaces = []
+    sensitive_words = (
+        "password", "secret", "token", "credential", "csrf", "api_key",
+        "session", "auth", "signature",
+    )
+
+    def scalar_paths(value, prefix=()):
+        if isinstance(value, dict):
+            for key, child in value.items():
+                yield from scalar_paths(child, (*prefix, str(key)))
+        elif isinstance(value, list):
+            for index, child in enumerate(value):
+                yield from scalar_paths(child, (*prefix, str(index)))
+        elif isinstance(value, (str, int, float, bool)) or value is None:
+            if prefix and not any(
+                word in part.lower() for part in prefix for word in sensitive_words
+            ):
+                escaped = [part.replace("~", "~0").replace("/", "~1") for part in prefix]
+                yield "/" + "/".join(escaped)
+
     for endpoint in site_map.endpoints:
         if endpoint.method != "POST" or not endpoint.request_body:
             continue
@@ -165,13 +184,7 @@ def _api_surfaces_from_map(site_map: SiteMapResult) -> list[AttackSurface]:
             continue
         if not _is_in_scope(endpoint.url, site_map.target):
             continue
-        parameters = tuple(sorted(
-            key for key, value in endpoint.request_body.items()
-            if isinstance(value, (str, int, float, bool))
-            and not any(word in key.lower() for word in (
-                "password", "secret", "token", "credential", "csrf", "api_key"
-            ))
-        ))
+        parameters = tuple(sorted(scalar_paths(endpoint.request_body)))
         if not parameters:
             continue
         parent = next(
@@ -186,6 +199,7 @@ def _api_surfaces_from_map(site_map: SiteMapResult) -> list[AttackSurface]:
             source="browser-api",
             request_body=endpoint.request_body,
             headers=endpoint.headers,
+            source_page=endpoint.source_page,
         ))
     return surfaces
 
