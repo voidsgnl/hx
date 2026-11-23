@@ -9,9 +9,10 @@ Local test harness for hx. Ground-truth endpoints:
                      cookie via JS after 1.5s, then redirects
                      to /reflect?q=test                     -> tests warm()
 """
-from flask import Flask, request, redirect, make_response
+from flask import Flask, request, redirect, make_response, session
 
 app = Flask(__name__)
+app.secret_key = "hx-test-harness-session-secret"
 
 CHALLENGE_HTML = """
 <!doctype html><html><head><title>Just a moment...</title></head>
@@ -172,6 +173,50 @@ def api_xss():
         return "csrf failed", 403
     body = request.get_json(silent=True) or {}
     return f"<html><body><div>{body.get('message', '')}</div></body></html>"
+
+
+@app.route("/api-rotating-page")
+def api_rotating_page():
+    return """<!doctype html><html><body>
+<script>
+(async () => {
+  const tokenResponse = await fetch("/api/rotate-token");
+  const {token} = await tokenResponse.json();
+  await fetch("/api/rotating-xss", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": "Bearer hx-rotating-secret",
+      "X-CSRF-Token": token
+    },
+    body: JSON.stringify({
+      profile: {bio: "hello", csrf_token: "body-secret"},
+      items: [{label: "first"}, {label: "second"}]
+    })
+  });
+})();
+</script>
+Rotating API client
+</body></html>"""
+
+
+@app.route("/api/rotate-token")
+def api_rotate_token():
+    import secrets
+    token = secrets.token_urlsafe(18)
+    session["hx_csrf"] = token
+    return {"token": token}
+
+
+@app.route("/api/rotating-xss", methods=["POST"])
+def api_rotating_xss():
+    if request.headers.get("Authorization") != "Bearer hx-rotating-secret":
+        return "authentication required", 401
+    if request.headers.get("X-CSRF-Token") != session.get("hx_csrf"):
+        return "stale CSRF token", 403
+    body = request.get_json(silent=True) or {}
+    bio = (body.get("profile") or {}).get("bio", "")
+    return f"<html><body><div>{bio}</div></body></html>"
 
 
 @app.route("/post-reflect", methods=["POST"])
