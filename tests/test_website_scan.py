@@ -7,6 +7,7 @@ from hx.website_scan import (
     _get_form_target, _post_surfaces_from_map, _api_surfaces_from_map, _targets_from_map, scan_website,
 )
 from hx.engines import AttackSurface, default_registry
+from hx.scanner import RequestSpec, _apply_marker
 import hx.website_scan as website_scan_module
 
 
@@ -225,3 +226,65 @@ async def test_website_scan_replays_authenticated_json_api_with_custom_csrf_head
     assert result.findings[0].confidence == "proven_execution"
     public_endpoint = result.to_dict()["site_map"]["endpoints"][0]
     assert public_endpoint["headers"]["authorization"] == "<redacted>"
+
+
+
+def test_api_planner_finds_nested_json_scalars_but_skips_nested_secrets():
+    site_map = SiteMapResult(target="https://example.test/")
+    from hx.site_mapper import DiscoveredEndpoint
+    site_map.endpoints.append(DiscoveredEndpoint(
+        url="https://example.test/api/update",
+        method="POST",
+        resource_type="fetch",
+        source_page="https://example.test/profile",
+        request_body={
+            "profile": {"bio": "hello", "csrf_token": "secret"},
+            "items": [{"label": "first"}],
+        },
+        headers={"content-type": "application/json"},
+        content_type="application/json",
+    ))
+    surfaces = _api_surfaces_from_map(site_map)
+    assert surfaces[0].parameters == ("/items/0/label", "/profile/bio")
+
+
+def test_nested_json_marker_replacement_preserves_siblings_and_arrays():
+    spec = RequestSpec(
+        method="JSON",
+        url="https://example.test/api",
+        json_body={
+            "profile": {"bio": "hello", "csrf_token": "keep"},
+            "items": [{"label": "first"}, {"label": "second"}],
+        },
+        parameters=("/profile/bio",),
+    )
+    marked = _apply_marker(spec, "/profile/bio", "hx-marker")
+    assert marked.json_body["profile"]["bio"] == "hx-marker"
+    assert marked.json_body["profile"]["csrf_token"] == "keep"
+    assert marked.json_body["items"] == [
+        {"label": "first"}, {"label": "second"}
+    ]
+
+
+@pytest.mark.asyncio
+async def test_website_scan_replays_nested_json_with_rotating_csrf_header():
+    result = await website_scan_module.scan_website(
+        "http://localhost:5000/api-rotating-page",
+        budget=240,
+        max_pages=2,
+        max_depth=0,
+        active_api=True,
+    )
+    assert result.post_apis_tested == 1
+    endpoint = next(
+        endpoint for endpoint in result.site_map.endpoints
+        if endpoint.url.endswith("/api/rotating-xss")
+    )
+    assert endpoint.source_page.endswith("/api-rotating-page")
+    assert endpoint.headers.get("authorization") == "Bearer hx-rotating-secret"
+    assert endpoint.headers.get("x-csrf-token")
+    assert any(
+        finding.param == "/profile/bio"
+        and finding.confidence == "proven_execution"
+        for finding in result.findings
+    ), result.to_dict()
