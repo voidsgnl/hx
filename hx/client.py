@@ -42,7 +42,7 @@ class TargetClient:
         self.budget_exhausted = False
 
     async def start(self, oracle_init_script: str, request_guard=None,
-                    headless: bool = True):
+                    headless: bool = True, navigation_guard=None):
         self.request_guard = request_guard
         if self.profile_dir is None:
             self.profile_dir = tempfile.mkdtemp(prefix="hx-profile-")
@@ -69,6 +69,11 @@ class TargetClient:
             if self.request_guard:
                 async def guard_route(route):
                     request_url = route.request.url
+                    if (route.request.is_navigation_request()
+                            and navigation_guard
+                            and not navigation_guard(request_url)):
+                        await route.abort(error_code="blockedbyclient")
+                        return
                     if request_url.startswith(("http://", "https://")):
                         try:
                             self.request_guard()
