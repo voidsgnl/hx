@@ -205,9 +205,65 @@ def _page_key(url: str) -> str:
     ))
 
 
-def _mapping_request_allowed(resource_type: str) -> bool:
-    """Skip passive media while retaining scripts, styles, documents and APIs."""
-    return resource_type.lower() not in {"image", "font", "media"}
+def _mapping_request_allowed(request) -> bool:
+    """Skip passive media and redundant framework GET transports before budgeting.
+
+    Next.js RSC/prefetch GETs are not independent application input surfaces.
+    They are safely aborted during mapping; POST Server Actions remain visible.
+    """
+    if isinstance(request, str):
+        resource_type = request.lower()
+        method = "GET"
+        request_url = ""
+        headers = {}
+    else:
+        resource_type = (getattr(request, "resource_type", "") or "").lower()
+        method = (getattr(request, "method", "GET") or "GET").upper()
+        request_url = getattr(request, "url", "") or ""
+        headers = getattr(request, "headers", {}) or {}
+
+    if resource_type in {"image", "font", "media"}:
+        return False
+    if (
+        resource_type in {"xhr", "fetch"}
+        and method == "GET"
+        and _is_framework_navigation_request(request_url, headers, method)
+    ):
+        return False
+    return True
+
+
+def _discovery_allowances(
+    *,
+    budget: int,
+    requests_used: int,
+    interaction_requests_used: int,
+    queued_pages: int,
+    page_slots_left: int,
+) -> tuple[int, int]:
+    """Return page-reservation and per-page interaction allowances.
+
+    Keep 70% of discovery capacity available for route coverage and up to
+    30% for UI exploration. Each page receives a bounded interaction slice
+    so a single control-rich page cannot consume the whole interaction share.
+    """
+    remaining = max(0, budget - requests_used)
+    page_requests_used = max(0, requests_used - interaction_requests_used)
+    page_capacity = max(0, int(budget * 0.7) - page_requests_used)
+    interaction_capacity = max(
+        0, int(budget * 0.3) - interaction_requests_used
+    )
+    page_reserve = min(
+        remaining,
+        page_capacity,
+        min(max(0, queued_pages), max(0, page_slots_left)) * 18,
+    )
+    interaction_allowance = min(
+        max(0, remaining - page_reserve),
+        max(8, int(budget * 0.1)),
+        interaction_capacity,
+    )
+    return page_reserve, interaction_allowance
 
 
 def _is_framework_navigation_request(
@@ -303,6 +359,7 @@ async def map_site(
     queued: set[str] = set()
     queue = deque([(normalized_base, 0)])
     group_data: dict[str, BehaviourGroup] = {}
+    interaction_requests_used = 0
 
     try:
         if progress:
@@ -487,11 +544,13 @@ async def map_site(
                         queue.append((absolute, depth + 1))
 
                 page_slots_left = max(0, max_pages - len(result.pages) - 1)
-                reserved_page_requests = min(
-                    pacer.remaining,
-                    min(len(queue), page_slots_left) * 18,
+                reserved_page_requests, interaction_allowance = _discovery_allowances(
+                    budget=pacer.budget,
+                    requests_used=pacer.used,
+                    interaction_requests_used=interaction_requests_used,
+                    queued_pages=len(queue),
+                    page_slots_left=page_slots_left,
                 )
-                interaction_allowance = max(0, pacer.remaining - reserved_page_requests)
                 explore_interactions = (
                     interaction_limit > 0 and interaction_allowance >= 8
                 )
@@ -510,9 +569,17 @@ async def map_site(
                 if explore_interactions:
                     interaction_path: list[dict] = []
                     seen_interactions: set[tuple[str, str, int]] = set()
+                    interaction_start_requests = pacer.used
                     # Re-scan the DOM after each action. This reveals controls
                     # that only become available after an earlier safe action.
+                    # Stop between actions when this page's fair-share slice is
+                    # used; the global Pacer remains the hard outbound limit.
                     for _ in range(interaction_limit):
+                        if (
+                            pacer.used - interaction_start_requests
+                            >= interaction_allowance
+                        ):
+                            break
                         controls = await client.page.evaluate(_INTERACTION_CANDIDATES_JS)
                         control = next((
                             item for item in controls
@@ -536,6 +603,7 @@ async def map_site(
                         if progress:
                             progress(f"[magenta]UI step {result.interactions_attempted + 1}[/magenta] Trying {control['role']} {control['name']!r} on {url}")
                         try:
+                            requests_before_action = pacer.used
                             locator = client.page.get_by_role(
                                 control["role"], name=control["name"], exact=True
                             )
@@ -555,6 +623,9 @@ async def map_site(
                                 await asyncio.gather(
                                     *tuple(capture_tasks), return_exceptions=True
                                 )
+                            interaction_requests_used += max(
+                                0, pacer.used - requests_before_action
+                            )
                             if not _is_in_scope(client.page.url, normalized_base):
                                 result.errors.append(
                                     f"{url}: UI interaction attempted an out-of-scope navigation"
