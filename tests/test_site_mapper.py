@@ -45,11 +45,13 @@ def test_behaviour_classifier_uses_route_and_form_semantics():
 
 @pytest.mark.asyncio
 async def test_maps_forms_and_groups_pages_without_submitting_them():
+    progress = []
     result = await map_site(
         "http://localhost:5000/discovery",
         budget=40,
         max_pages=5,
         max_depth=1,
+        progress=progress.append,
     )
     assert result.pages
     page = next(item for item in result.pages if item.url.endswith("/discovery"))
@@ -61,6 +63,11 @@ async def test_maps_forms_and_groups_pages_without_submitting_them():
     }
     assert result.groups
     assert result.requests_used > 0
+    assert any("Starting Chromium" in event for event in progress)
+    assert any("HTTP response" in event for event in progress)
+    assert any("Page analysis" in event for event in progress)
+    assert any("Page mapped" in event for event in progress)
+    assert any("Discovery finished" in event for event in progress)
 
 
 @pytest.mark.asyncio
