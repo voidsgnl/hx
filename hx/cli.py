@@ -155,6 +155,7 @@ def scan_cmd(
             interaction_limit=interaction_limit,
             active_post=active_post, active_api=active_api, include_auth_forms=include_auth_forms,
             storage_state=storage_state,
+            progress=(None if json_out else console.print),
         ))
         if json_out:
             typer.echo(json.dumps(result.to_dict(), indent=2))
