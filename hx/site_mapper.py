@@ -273,6 +273,8 @@ async def map_site(
     group_data: dict[str, BehaviourGroup] = {}
 
     try:
+        if progress:
+            progress("[bold cyan]Browser[/bold cyan] Starting Chromium and preparing the scan session")
         if owns_client:
             await client.start(
                 oracle_init_script=ORACLE_INIT_JS,
@@ -286,6 +288,8 @@ async def map_site(
             client.budget_exhausted = False
         await client.page.add_init_script(_ROUTE_CAPTURE_JS)
         if _warm:
+            if progress:
+                progress(f"[dim]Connecting[/dim] Checking reachability of {origin}")
             await pacer.pause()
             if not await client.warm():
                 result.errors.append("Could not reach the application origin.")
@@ -366,6 +370,8 @@ async def map_site(
                 )
                 result.endpoints.append(endpoint)
                 page_endpoints.append(endpoint)
+                if progress:
+                    progress(f"[blue]API observed[/blue] {endpoint.method} {endpoint.url} ({endpoint.resource_type})")
 
             def record_request(request, source=url):
                 trigger_path = list(active_interaction) if active_interaction else None
@@ -383,6 +389,8 @@ async def map_site(
                 )
                 status = response.status if response else None
                 final_url = client.page.url
+                if progress:
+                    progress(f"[dim]HTTP response[/dim] {status if status is not None else 'no status'} — {final_url}")
                 if not _is_in_scope(final_url, normalized_base):
                     result.errors.append(
                         f"{url}: navigation ended outside the allowed origin"
@@ -399,6 +407,8 @@ async def map_site(
                     pass
                 if capture_tasks:
                     await asyncio.gather(*tuple(capture_tasks), return_exceptions=True)
+                if progress:
+                    progress("[dim]Inspecting page[/dim] Reading title, forms, links, and browser activity")
                 title = await client.page.title()
                 forms_raw = await discover_forms(client.page)
                 forms = [
@@ -416,6 +426,9 @@ async def map_site(
                 discovered_links = await client.page.evaluate(
                     "() => Array.from(document.querySelectorAll('a[href]')).map(a => a.href)"
                 )
+
+                if progress:
+                    progress(f"[dim]Page analysis[/dim] {title[:70]!r}: {len(forms)} forms, {len(discovered_links)} links, {len(page_endpoints)} API calls observed")
 
                 # Explore a bounded set of non-submit controls. Forms, ordinary
                 # links, and controls with state-changing labels are excluded.
@@ -445,6 +458,8 @@ async def map_site(
                         }
                         interaction_path.append(step)
                         active_interaction = list(interaction_path)
+                        if progress:
+                            progress(f"[magenta]UI step {result.interactions_attempted + 1}[/magenta] Trying {control['role']} {control['name']!r} on {url}")
                         try:
                             locator = client.page.get_by_role(
                                 control["role"], name=control["name"], exact=True
@@ -453,6 +468,8 @@ async def map_site(
                                 continue
                             await locator.nth(control["match_index"]).click(timeout=1500)
                             result.interactions_attempted += 1
+                            if progress:
+                                progress(f"[green]UI step complete[/green] {control['name']!r}; checking for new routes and API activity")
                             try:
                                 await client.page.wait_for_load_state(
                                     "networkidle", timeout=1000
@@ -469,6 +486,8 @@ async def map_site(
                                 )
                                 break
                         except BudgetExhausted:
+                            if progress:
+                                progress(f"[yellow]Discovery budget reached[/yellow] while exploring {control.get('name', '')!r}")
                             raise
                         except Exception as exc:
                             result.errors.append(
@@ -488,6 +507,8 @@ async def map_site(
                 ))
             except BudgetExhausted:
                 result.budget_exhausted = True
+                if progress:
+                    progress(f"[yellow]Discovery budget exhausted[/yellow] while processing {url}")
                 break
             except Exception as exc:
                 result.errors.append(f"{url}: {type(exc).__name__}: {str(exc)[:180]}")
@@ -528,7 +549,7 @@ async def map_site(
             ))
 
             if progress:
-                progress(f"[green]Mapped[/green] {url}: {len(forms)} forms, {len(page_endpoints)} API endpoints, {len(links)} same-origin links")
+                progress(f"[green]Page mapped[/green] {url} — {len(forms)} forms, {len(page_endpoints)} API endpoints, {len(links)} same-origin links queued ({len(queue)} pending); requests {pacer.used}/{pacer.budget}")
             group = group_data.setdefault(behaviour, BehaviourGroup(name=behaviour))
             group.pages.append(url)
             for form in forms:
