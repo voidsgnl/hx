@@ -43,6 +43,11 @@ ORACLE_INIT_JS = """
       }
     },
   });
+  Object.defineProperty(window, "__hx_noop_", {
+    configurable: false,
+    writable: false,
+    value: () => {},
+  });
 
   window.alert = (message) => record("alert", message);
   window.confirm = (message) => {
