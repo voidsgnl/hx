@@ -1,28 +1,18 @@
-"""Orchestration: warm -> fast-path reflection map -> browser probe on candidates.
-
-Separation of concerns is load-bearing:
-  - fast path finds reflections (cheap, many requests, pacer-gated)
-  - browser proves execution (expensive, few requests, pacer-gated)
-The scanner only reports a finding when the browser oracle proves it.
-"""
+"""Orchestration: reflection discovery -> browser-confirmed execution."""
 from dataclasses import dataclass, field
 from urllib.parse import urlencode, urlparse, parse_qs, urlunparse
 import hashlib
+import logging
 
 from hx.client import TargetClient
 from hx.oracle import (
-    probe,
-    probe_post_form,
-    probe_post_json,
-    ORACLE_INIT_JS,
-    ProbeResult,
-    make_payload_id,
+    probe, probe_post_form, probe_post_json, ORACLE_INIT_JS,
+    ProbeResult, make_payload_id,
 )
 from hx.fastpath import FastPath, Candidate
 from hx.pacer import Pacer, BudgetExhausted
 from hx.payloads import detect_context, payloads_for
 from hx.fingerprint import check_fingerprint_match
-import logging
 
 log = logging.getLogger("hx")
 
@@ -60,6 +50,30 @@ def _marker_for(param: str) -> str:
     return f"hxrefl{h}"
 
 
+def _fragment_query(fragment: str) -> dict[str, list[str]]:
+    """Extract query parameters from a client-side route fragment."""
+    route = fragment.lstrip("#")
+    query = route.split("?", 1)[1] if "?" in route else route
+    return parse_qs(query, keep_blank_values=True)
+
+
+def _with_fragment_param(url: str, param: str, value: str) -> str:
+    """Replace one fragment parameter while preserving the client-side route."""
+    parts = urlparse(url)
+    route = parts.fragment.lstrip("#")
+    if "?" in route:
+        prefix, query = route.split("?", 1)
+        prefix += "?"
+    elif "=" in route or "&" in route:
+        prefix, query = "", route
+    else:
+        prefix, query = route, ""
+    values = parse_qs(query, keep_blank_values=True)
+    values[param] = [value]
+    fragment = prefix + urlencode(values, doseq=True)
+    return urlunparse(parts._replace(fragment=fragment))
+
+
 def _with_param(url: str, param: str, value: str) -> str:
     parts = urlparse(url)
     q = parse_qs(parts.query, keep_blank_values=True)
@@ -88,16 +102,18 @@ async def scan(target: str | RequestSpec, *, proxy: str | None = None,
     origin = f"{parsed.scheme}://{parsed.netloc}"
     if spec.method == "GET":
         params = list(parse_qs(parsed.query, keep_blank_values=True).keys())
+        fragment_params = list(_fragment_query(parsed.fragment).keys())
     elif spec.method == "POST":
         params = list((spec.form or {}).keys())
+        fragment_params = []
     elif spec.method == "JSON":
         params = list((spec.json_body or {}).keys())
+        fragment_params = []
     else:
         raise ValueError(f"unknown method {spec.method}")
 
     result = ScanResult(target=spec.url, reached_app=False)
     pacer = Pacer(budget=budget)
-
     client = TargetClient(origin, proxy=proxy)
     await client.start(
         oracle_init_script=ORACLE_INIT_JS,
@@ -110,13 +126,12 @@ async def scan(target: str | RequestSpec, *, proxy: str | None = None,
         result.reached_app = reached
         if not reached:
             return result
-
         if client.budget_exhausted:
             raise BudgetExhausted("request budget exhausted during browser warm-up")
 
         cookies = await client.cookies()
         fp = FastPath(proxy=proxy, request_guard=pacer.reserve)
-        fp.set_allowed_domains({parsed.netloc.split(":")[0]})
+        fp.set_allowed_domains({parsed.hostname or ""})
         fp_check = await check_fingerprint_match(client.page, fp.impersonate)
         result.fingerprint = {
             "browser": fp_check.browser_version,
@@ -127,88 +142,91 @@ async def scan(target: str | RequestSpec, *, proxy: str | None = None,
         if fp_check.warning:
             log.warning(fp_check.warning)
 
-        # Phase A: cheap reflection mapping with unique markers
-        candidates: list[tuple[str, Candidate, str]] = []
+        # Server-visible parameters use the HTTP fast path.
+        candidates: list[tuple[str, Candidate, str, str]] = []
         for param in params:
             marker = _marker_for(param)
             probe_spec = _apply_marker(spec, param, marker)
             await pacer.pause()
             if probe_spec.method == "GET":
                 c = fp.find_reflection(probe_spec.url, marker, cookies)
-                if c:
-                    await pacer.pause()
-                    body = fp.fetch_body(probe_spec.url, cookies)
-                else:
-                    body = ""
+                body = fp.fetch_body(probe_spec.url, cookies) if c else ""
             elif probe_spec.method == "POST":
                 c = fp.find_reflection_post_form(
                     probe_spec.url, probe_spec.form or {}, marker, cookies
                 )
-                if c:
-                    await pacer.pause()
-                    body = fp.fetch_body_post_form(
-                        probe_spec.url, probe_spec.form or {}, cookies
-                    )
-                else:
-                    body = ""
+                body = fp.fetch_body_post_form(
+                    probe_spec.url, probe_spec.form or {}, cookies
+                ) if c else ""
             else:
                 c = fp.find_reflection_post_json(
                     probe_spec.url, probe_spec.json_body or {}, marker, cookies
                 )
-                if c:
-                    await pacer.pause()
-                    body = fp.fetch_body_post_json(
-                        probe_spec.url, probe_spec.json_body or {}, cookies
-                    )
-                else:
-                    body = ""
+                body = fp.fetch_body_post_json(
+                    probe_spec.url, probe_spec.json_body or {}, cookies
+                ) if c else ""
             if c:
                 result.reflections.append(c)
-                candidates.append((param, c, body))
+                candidates.append((param, c, body, "http"))
 
-        # Phase B: prove only reflected params with context-aware payloads
-        for param, cand, body in candidates:
+        # Fragment values are browser-only: browsers do not send fragments over HTTP.
+        for param in fragment_params:
+            marker = _marker_for(param)
+            marker_url = _with_fragment_param(spec.url, param, marker)
+            await pacer.pause()
+            try:
+                await client.page.goto(
+                    marker_url, wait_until="domcontentloaded", timeout=15000
+                )
+            except Exception:
+                pass
+            body = await client.page.content()
+            offset = body.find(marker)
+            if offset >= 0:
+                c = Candidate(
+                    url=marker_url, marker=marker, offset=offset, status=200
+                )
+                result.reflections.append(c)
+                candidates.append((param, c, body, "fragment"))
+
+        # Prove only candidates that actually reflected in the relevant context.
+        for param, cand, body, source in candidates:
             det = detect_context(body, cand.offset)
-
             payload_templates = payloads_for(det.context)
             for payload_index in range(len(payload_templates)):
                 payload_id = make_payload_id()
                 payload = payloads_for(
                     det.context, pid_marker=payload_id
                 )[payload_index]
-                payload_spec = _apply_marker(spec, param, payload)
+                if source == "fragment":
+                    payload_url = _with_fragment_param(spec.url, param, payload)
+                    payload_spec = RequestSpec(method="GET", url=payload_url)
+                else:
+                    payload_spec = _apply_marker(spec, param, payload)
                 await pacer.pause()
                 if payload_spec.method == "GET":
                     pr = await probe(
                         client.page, payload_spec.url, payload,
                         payload_id=payload_id,
                     )
-                    finding_url = payload_spec.url
                 elif payload_spec.method == "POST":
                     pr = await probe_post_form(
                         client.page, payload_spec.url, payload_spec.form or {},
                         payload_id=payload_id,
                     )
-                    finding_url = payload_spec.url
                 else:
                     pr = await probe_post_json(
-                        client.page,
-                        payload_spec.url,
-                        payload_spec.json_body or {},
-                        payload_id=payload_id,
+                        client.page, payload_spec.url,
+                        payload_spec.json_body or {}, payload_id=payload_id,
                     )
-                    finding_url = payload_spec.url
                 if client.budget_exhausted:
                     raise BudgetExhausted(
                         "request budget exhausted during browser oracle probe"
                     )
                 if pr.proven:
                     result.findings.append(Finding(
-                        param=param,
-                        url=finding_url,
-                        payload=payload,
-                        probe=pr,
-                        context=det.context.value,
+                        param=param, url=payload_spec.url, payload=payload,
+                        probe=pr, context=det.context.value,
                     ))
                     break
 
@@ -221,8 +239,6 @@ async def scan(target: str | RequestSpec, *, proxy: str | None = None,
     finally:
         result.requests_used = pacer.used
         result.budget_exhausted = (
-            result.budget_exhausted
-            or pacer.exhausted
-            or client.budget_exhausted
+            result.budget_exhausted or pacer.exhausted or client.budget_exhausted
         )
         await client.close()
