@@ -17,6 +17,7 @@ class AttackSurface:
     parameters: tuple[str, ...]
     behaviour: str
     source: str
+    form_page: str | None = None
 
 
 @dataclass(frozen=True)
