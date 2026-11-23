@@ -6,6 +6,7 @@ from hx.site_mapper import (
     _behaviour_for,
     _is_framework_navigation_request,
     _is_in_scope,
+    _mapping_request_allowed,
     _page_key,
     map_site,
 )
@@ -30,6 +31,28 @@ def test_page_key_deduplicates_values_but_preserves_parameter_names():
     third = _page_key("https://example.test/search?term=bob")
     assert first == second
     assert first != third
+
+
+def test_mapping_request_filter_skips_passive_assets_and_third_party_hosts():
+    base = "https://example.test/"
+    assert not _mapping_request_allowed(
+        "https://example.test/photo.webp", "image", base
+    )
+    assert not _mapping_request_allowed(
+        "https://example.test/site.woff2", "font", base
+    )
+    assert not _mapping_request_allowed(
+        "https://example.test/video.mp4", "media", base
+    )
+    assert _mapping_request_allowed(
+        "https://example.test/app.js", "script", base
+    )
+    assert _mapping_request_allowed(
+        "https://example.test/api/search?q=x", "fetch", base
+    )
+    assert not _mapping_request_allowed(
+        "https://analytics.example-cdn.test/collect.js", "script", base
+    )
 
 
 def test_framework_navigation_requests_are_not_application_api_surfaces():
