@@ -61,3 +61,19 @@ async def test_unrelated_page_execution_does_not_prove(client):
         payload_id="hxexpected",
     )
     assert not r.proven, f"unrelated JavaScript was attributed to the probe: {r.hits}"
+
+
+
+async def test_cross_origin_navigation_still_proves(client):
+    # The fixture warms localhost, while this request uses 127.0.0.1.
+    # They reach the same harness but are distinct browser origins, so
+    # origin-scoped sessionStorage cannot carry the active probe ID.
+    cross_origin = "http://127.0.0.1:5000"
+    payload = "<script>window.__hx_proof('hxcrossorigin')</script>"
+    url = f"{cross_origin}/reflect?q={quote(payload)}"
+    result = await probe(
+        client.page, url, payload, payload_id="hxcrossorigin"
+    )
+    assert result.proven, (
+        f"expected proof after cross-origin navigation, hits={result.hits}"
+    )
