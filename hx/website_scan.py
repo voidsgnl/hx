@@ -22,6 +22,7 @@ class WebsiteScanResult:
     tested_targets: list[str] = field(default_factory=list)
     skipped_post_forms: int = 0
     skipped_post_endpoints: int = 0
+    mapping_budget_exhausted: bool = False
     requests_used: int = 0
     budget_exhausted: bool = False
 
@@ -36,6 +37,7 @@ class WebsiteScanResult:
             "tested_targets": self.tested_targets,
             "skipped_post_forms": self.skipped_post_forms,
             "skipped_post_endpoints": self.skipped_post_endpoints,
+            "mapping_budget_exhausted": self.mapping_budget_exhausted,
             "requests_used": self.requests_used,
             "budget_exhausted": self.budget_exhausted,
             "scans": [
@@ -126,11 +128,18 @@ async def scan_website(
     change application state. Their testing will require an explicit active
     form-testing policy and suitable CSRF/session handling.
     """
+    # Reserve most of the request budget for actual vulnerability checks.
+    # A large site must not consume the entire budget during discovery alone.
+    mapping_budget = max(1, int(budget * 0.4))
     site_map = await map_site(
-        base_url, proxy=proxy, budget=budget,
+        base_url, proxy=proxy, budget=mapping_budget,
         max_pages=max_pages, max_depth=max_depth, headless=headless,
     )
-    result = WebsiteScanResult(target=base_url, site_map=site_map)
+    result = WebsiteScanResult(
+        target=base_url,
+        site_map=site_map,
+        mapping_budget_exhausted=site_map.budget_exhausted,
+    )
     (
         targets,
         result.skipped_post_forms,
@@ -155,7 +164,6 @@ async def scan_website(
     result.requests_used = budget - remaining
     result.budget_exhausted = (
         result.budget_exhausted
-        or site_map.budget_exhausted
         or remaining == 0
     )
     return result
