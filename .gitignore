@@ -60,6 +60,10 @@ test-results/
 .hx-profiles/
 *.hx-profile/
 
+# authenticated Playwright storage state (contains cookies and localStorage)
+.hx/
+*.storage-state.json
+
 # scan outputs
 hx-results/
 *.hx.json
