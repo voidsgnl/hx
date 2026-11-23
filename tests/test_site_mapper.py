@@ -43,6 +43,13 @@ def test_framework_navigation_requests_are_not_application_api_surfaces():
         "https://example.test/about",
         {"RSC": "1", "Accept": "text/x-component"},
     )
+    # Next.js Server Actions use POST and may also negotiate RSC responses;
+    # keep them visible because they can carry application input.
+    assert not _is_framework_navigation_request(
+        "https://example.test/profile",
+        {"Next-Action": "action-id", "Accept": "text/x-component"},
+        method="POST",
+    )
     assert not _is_framework_navigation_request(
         "https://example.test/api/search?q=term",
         {"Accept": "application/json"},
