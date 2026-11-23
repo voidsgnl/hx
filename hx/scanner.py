@@ -252,6 +252,7 @@ async def scan(target: str | RequestSpec, *, proxy: str | None = None,
                 )
                 if refreshed:
                     spec.headers = {**(spec.headers or {}), **refreshed}
+                    cookies = await client.cookies()
             probe_spec = _apply_marker(spec, param, marker)
             await pacer.pause()
             if probe_spec.method == "GET":
