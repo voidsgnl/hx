@@ -90,6 +90,12 @@ def unrelated_alert():
     return "<html><body><script>alert('unrelated-page-script')</script></body></html>"
 
 
+@app.route("/cross-origin-redirect")
+def cross_origin_redirect():
+    # Redirect from localhost to 127.0.0.1: same harness, different origin.
+    return redirect("http://127.0.0.1:5000/reflect?q=" + request.args.get("q", ""))
+
+
 @app.route("/safe")
 def safe():
     from markupsafe import escape
