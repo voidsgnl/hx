@@ -66,9 +66,14 @@ class OpenRedirectEngine:
     engine_id = "open_redirect"
 
     def supports(self, surface: AttackSurface) -> bool:
+        query_parameters = {
+            name for name, _ in parse_qsl(
+                urlsplit(surface.url).query, keep_blank_values=True
+            )
+        }
         return (
             surface.method.upper() == "GET"
-            and any(name.lower() in REDIRECT_PARAMETERS for name in surface.parameters)
+            and any(name.lower() in REDIRECT_PARAMETERS for name in query_parameters)
         )
 
     async def run(
@@ -89,7 +94,12 @@ class OpenRedirectEngine:
         canary = f"https://{CANARY_HOST}{CANARY_PATH}"
 
         try:
-            for parameter in surface.parameters:
+            query_parameters = {
+                name for name, _ in parse_qsl(
+                    urlsplit(surface.url).query, keep_blank_values=True
+                )
+            }
+            for parameter in query_parameters:
                 if parameter.lower() not in REDIRECT_PARAMETERS:
                     continue
                 tested_url = _with_query_value(surface.url, parameter, canary)
