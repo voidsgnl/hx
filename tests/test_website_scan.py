@@ -41,9 +41,10 @@ def test_target_planner_keeps_scope_and_skips_post_forms():
             },
         ],
     ))
-    targets, skipped = _targets_from_map(site_map)
+    targets, skipped_forms, skipped_endpoints = _targets_from_map(site_map)
     assert targets == ["https://example.test/search?q=hx"]
-    assert skipped == 1
+    assert skipped_forms == 1
+    assert skipped_endpoints == 0
 
 
 @pytest.mark.asyncio
