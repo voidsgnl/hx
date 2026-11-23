@@ -448,8 +448,11 @@ async def map_site(
                                 break
                         except BudgetExhausted:
                             raise
-                        except Exception:
-                            pass
+                        except Exception as exc:
+                            result.errors.append(
+                                f"{url}: UI control {control.get('name', '')!r}: "
+                                f"{type(exc).__name__}: {str(exc)[:120]}"
+                            )
                         finally:
                             active_interaction = None
 

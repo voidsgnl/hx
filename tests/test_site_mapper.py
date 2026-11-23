@@ -92,11 +92,11 @@ async def test_maps_click_triggered_api_and_records_replayable_control():
         max_pages=1,
         max_depth=0,
     )
+    assert result.interactions_attempted >= 1, result.to_dict()
     endpoint = next(
         item for item in result.endpoints
         if item.url.endswith("/api/interactive-xss")
     )
-    assert result.interactions_attempted >= 1
     assert endpoint.method == "POST"
     assert endpoint.source_page.endswith("/interactive-api-page")
     assert endpoint.trigger == {
