@@ -177,6 +177,8 @@ async def scan(target: str | RequestSpec, *, proxy: str | None = None,
                 body = await submit_form_from_page(
                     client.page, spec.form_page, probe_spec.url, param, marker
                 )
+                if client.budget_exhausted:
+                    raise BudgetExhausted("request budget exhausted during POST form discovery")
                 offset = body.find(marker)
                 c = Candidate(
                     url=probe_spec.url, marker=marker, offset=offset,
